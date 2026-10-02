@@ -474,3 +474,15 @@ test('an in-flight native render cannot replace newer local spacing geometry', a
   await flush()
   assert.equal(JSON.stringify(editor.interactivePreview.layout), geometry)
 })
+
+
+test('Escape clears cell selection and returns focus to the canvas', async (t) => {
+  const { editor, controls } = await gridFixture(t)
+  editor.selected = [controls.layout.value.cells[0].id]
+  let focused = false
+  controls.viewport.value = { focus: () => { focused = true } }
+  controls.key({ key: 'Escape', preventDefault() {} })
+  assert.equal(editor.selected.length, 0)
+  assert.equal(focused, true)
+  controls.viewport.value = null
+})

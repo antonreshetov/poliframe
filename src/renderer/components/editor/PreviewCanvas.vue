@@ -761,7 +761,9 @@ function key(event: KeyboardEvent) {
   const cells = layout.value?.cells ?? []
   const index = cells.findIndex(c => c.id === e.selected[0])
   if (event.key === 'Escape') {
+    event.preventDefault()
     e.selected = []
+    viewport.value?.focus({ preventScroll: true })
   }
   else if (event.key === 'Delete' || event.key === 'Backspace') {
     event.preventDefault()
@@ -1144,6 +1146,7 @@ function key(event: KeyboardEvent) {
   will-change: transform;
 }
 .preview-viewport {
+  outline: none;
   position: relative;
   overflow: hidden;
   display: flex;
