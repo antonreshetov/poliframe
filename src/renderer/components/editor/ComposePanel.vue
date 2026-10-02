@@ -23,6 +23,57 @@ import NumberField from './NumberField.vue'
 
 const e = useEditorContext()
 const dragging = ref('')
+const dragOrder = ref<string[] | null>(null)
+const displayedPanels = computed(() =>
+  dragOrder.value
+    ? dragOrder.value
+        .map(id => e.state.panels.find(panel => panel.photoId === id)!)
+        .filter(Boolean)
+    : e.state.panels,
+)
+function startPanelDrag(event: DragEvent, id: string) {
+  dragging.value = id
+  dragOrder.value = e.state.panels.map(panel => panel.photoId)
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', id)
+  }
+}
+function movePanelDrag(event: DragEvent) {
+  if (!dragOrder.value || !dragging.value)
+    return
+  const list = event.currentTarget as HTMLElement
+  const rows = Array.from(list.querySelectorAll<HTMLElement>('.photo-row'))
+  const top = list.getBoundingClientRect().top
+  const target = rows.findIndex((row) => {
+    const rowTop = top + row.offsetTop
+    return (
+      event.clientY >= rowTop && event.clientY <= rowTop + row.offsetHeight
+    )
+  })
+  const from = dragOrder.value.indexOf(dragging.value)
+  if (target < 0 || from === target)
+    return
+  const next = [...dragOrder.value]
+  next.splice(target, 0, next.splice(from, 1)[0]!)
+  dragOrder.value = next
+}
+function endPanelDrag() {
+  dragging.value = ''
+  dragOrder.value = null
+}
+function dropPanel(event: DragEvent, id: string) {
+  if (dragging.value && dragOrder.value) {
+    const index = dragOrder.value.indexOf(dragging.value)
+    const target = e.state.panels[index]?.photoId
+    if (target)
+      e.reorder(dragging.value, target)
+  }
+  else {
+    e.drop(event, id)
+  }
+  endPanelDrag()
+}
 const measure = computed(() => e.state[e.state.units])
 const suffix = computed(() => (e.state.units === 'percent' ? '%' : 'px'))
 const thumbnailSize = computed(() => {
@@ -175,67 +226,71 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
           "
         >{{ e.state.panels.length }}/{{ e.capacity }}</span>
       </div>
-      <div
-        v-for="(panel, i) in e.state.panels"
-        :key="panel.photoId"
-        class="photo-row flex items-center gap-2 rounded-md bg-card p-1"
-        draggable="true"
-        @dragstart="dragging = panel.photoId"
-        @dragover.prevent
-        @drop.prevent="
-          dragging
-            ? e.reorder(dragging, panel.photoId)
-            : e.drop($event, panel.photoId);
-          dragging = '';
-        "
-        @dragend="dragging = ''"
+      <TransitionGroup
+        name="photo-reorder"
+        tag="div"
+        class="relative space-y-1"
+        @dragover.prevent="movePanelDrag"
       >
-        <button
-          class="relative shrink-0"
-          :aria-label="`Replace image ${i + 1}`"
-          title="Replace image"
-          @click="e.add(undefined, panel.photoId)"
+        <div
+          v-for="(panel, i) in displayedPanels"
+          :key="panel.photoId"
+          class="photo-row flex items-center gap-2 rounded-md bg-card p-1"
+          :class="{ 'is-dragging': dragging === panel.photoId }"
+          draggable="true"
+          @dragstart="startPanelDrag($event, panel.photoId)"
+          @dragover.prevent
+          @drop.stop.prevent="dropPanel($event, panel.photoId)"
+          @dragend="endPanelDrag"
         >
-          <img
-            :src="e.photos[panel.photoId]?.thumbnail"
-            class="h-10 w-10 rounded object-cover"
-            alt=""
-          ><span
-            v-if="
-              panel.transform.rotation
-                || panel.transform.flipX
-                || panel.transform.flipY
-                || panel.transform.crop.width < 1
-                || panel.transform.crop.height < 1
-            "
-            class="absolute bottom-0 right-0 rounded-full bg-primary p-0.5 text-primary-foreground"
-          ><Crop :size="10" /></span>
-        </button>
-        <div class="min-w-0 flex-1">
-          <p class="text-xs text-muted-foreground">
-            {{ i + 1 }}
-          </p>
-          <p class="truncate text-xs">
-            {{ e.photos[panel.photoId]?.name }}
-          </p>
+          <button
+            class="relative shrink-0"
+            :aria-label="`Replace image ${i + 1}`"
+            title="Replace image"
+            @click="e.add(undefined, panel.photoId)"
+          >
+            <img
+              :src="e.photos[panel.photoId]?.thumbnail"
+              class="h-10 w-10 rounded object-cover"
+              alt=""
+              draggable="false"
+            ><span
+              v-if="
+                panel.transform.rotation
+                  || panel.transform.flipX
+                  || panel.transform.flipY
+                  || panel.transform.crop.width < 1
+                  || panel.transform.crop.height < 1
+              "
+              class="absolute bottom-0 right-0 rounded-full bg-primary p-0.5 text-primary-foreground"
+            ><Crop :size="10" /></span>
+          </button>
+          <div class="min-w-0 flex-1">
+            <p class="text-xs text-muted-foreground">
+              {{ i + 1 }}
+            </p>
+            <p class="truncate text-xs">
+              {{ e.photos[panel.photoId]?.name }}
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            :aria-label="`Crop image ${i + 1}`"
+            title="Crop & rotate"
+            @click="e.cropId = panel.photoId"
+          >
+            <Crop />
+          </Button><Button
+            variant="ghost"
+            size="icon-xs"
+            :aria-label="`Remove image ${i + 1}`"
+            @click="e.remove(panel.photoId)"
+          >
+            <CircleX class="remove-photo-icon" />
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          :aria-label="`Crop image ${i + 1}`"
-          title="Crop & rotate"
-          @click="e.cropId = panel.photoId"
-        >
-          <Crop />
-        </Button><Button
-          variant="ghost"
-          size="icon-xs"
-          :aria-label="`Remove image ${i + 1}`"
-          @click="e.remove(panel.photoId)"
-        >
-          <CircleX class="remove-photo-icon" />
-        </Button>
-      </div>
+      </TransitionGroup>
       <Button
         v-if="e.state.panels.length < e.capacity"
         variant="ghost"
@@ -453,7 +508,7 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
             :options="['cm', 'mm', 'in']"
           />
         </div>
-        <div class="space-y-1">
+        <div class="relative space-y-1">
           <h3 class="text-xs">
             Orientation
           </h3>
@@ -517,3 +572,12 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
     </section>
   </div>
 </template>
+
+<style scoped>
+.photo-row.is-dragging {
+  opacity: 0.18;
+}
+.photo-reorder-move {
+  transition: transform 140ms ease-in-out;
+}
+</style>
