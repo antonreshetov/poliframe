@@ -306,3 +306,15 @@
     background: var(--secondary);
     border-color: transparent;
 }
+
+[data-slot="button"].add-image-zone {
+    width: 100%;
+    height: 56px;
+    border-radius: 8px;
+    border: 1.5px dashed color-mix(in srgb, var(--muted-foreground) 40%, transparent);
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 400;
+    gap: 8px;
+}

@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import type { GridNode } from '../../../shared/contracts'
-import { CircleCheck, CircleX, Crop, Images, TriangleAlert } from '@lucide/vue'
+import {
+  CircleCheck,
+  CircleX,
+  Crop,
+  ImagePlus,
+  TriangleAlert,
+} from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -228,21 +234,17 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
           <CircleX class="remove-photo-icon" />
         </Button>
       </div>
-      <div
+      <Button
         v-if="e.state.panels.length < e.capacity"
-        class="flex h-14 items-center justify-center rounded-lg border border-dashed"
+        variant="ghost"
+        class="add-image-zone"
+        :disabled="e.importing"
+        @click="e.add()"
         @dragover.prevent
         @drop.prevent="e.drop($event)"
       >
-        <Button
-          variant="ghost"
-          size="sm"
-          :disabled="e.importing"
-          @click="e.add()"
-        >
-          <Images />{{ e.importing ? "Importing…" : "Add image" }}
-        </Button>
-      </div>
+        <ImagePlus />{{ e.importing ? "Importing…" : "Add image" }}
+      </Button>
     </section>
     <section class="space-y-3 border-t pt-3">
       <div class="flex items-center justify-between gap-2">
