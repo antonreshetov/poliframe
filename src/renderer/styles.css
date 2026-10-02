@@ -193,18 +193,18 @@
     gap: 10px;
 }
 .photo-row [data-slot="button"] {
-    width: 16px;
+    width: 18px;
     height: 20px;
     padding: 0;
     color: var(--muted-foreground);
 }
 .photo-row [data-slot="button"] svg {
-    width: 13px;
-    height: 13px;
+    width: 16px;
+    height: 16px;
 }
 .remove-photo-icon {
     fill: var(--muted-foreground);
-    stroke: var(--muted);
+    stroke: var(--card);
 }
 .sidebar [data-slot="slider"] {
     min-height: 20px;
@@ -292,4 +292,17 @@
 .segmented-control-item:disabled {
     opacity: 0.5;
     pointer-events: none;
+}
+
+.layout-segments {
+    flex: 1;
+    min-width: 0;
+}
+.layout-segments .segmented-control-item {
+    flex: 1 1 auto;
+    padding-inline: 8px;
+}
+.sidebar [data-slot="select-trigger"] {
+    background: var(--secondary);
+    border-color: transparent;
 }

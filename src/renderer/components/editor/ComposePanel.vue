@@ -159,17 +159,18 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
           Images
         </h2>
         <span
+          class="self-center text-[11px]"
           :class="
             e.state.panels.length > e.capacity
               ? 'text-orange-500'
               : 'text-muted-foreground'
           "
-        >{{ e.state.panels.length }} / {{ e.capacity }}</span>
+        >{{ e.state.panels.length }}/{{ e.capacity }}</span>
       </div>
       <div
         v-for="(panel, i) in e.state.panels"
         :key="panel.photoId"
-        class="photo-row flex items-center gap-2 rounded-md bg-muted p-1"
+        class="photo-row flex items-center gap-2 rounded-md bg-card p-1"
         draggable="true"
         @dragstart="dragging = panel.photoId"
         @dragover.prevent
@@ -245,11 +246,12 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
     </section>
     <section class="space-y-3 border-t pt-3">
       <div class="flex items-center justify-between gap-2">
-        <h2 class="text-xs">
+        <h2 class="text-[13px]">
           Layout
         </h2>
         <ToggleGroup
           orientation="horizontal"
+          class="layout-segments"
           :model-value="e.state.layout"
           type="single"
           @update:model-value="setLayout"
@@ -320,7 +322,7 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
         />
       </template>
       <div class="flex items-center gap-2">
-        <h2 class="text-xs">
+        <h2 class="text-[13px]">
           Units
         </h2>
         <ToggleGroup
