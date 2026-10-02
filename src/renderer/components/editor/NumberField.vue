@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onUnmounted } from 'vue'
 import { Slider } from '@/components/ui/slider'
 
 defineProps<{
@@ -8,6 +9,27 @@ defineProps<{
   suffix?: string
   disabled?: boolean
 }>()
+const emit = defineEmits<{ interactionStart: [], interactionEnd: [] }>()
+let interacting = false
+function end() {
+  if (!interacting)
+    return
+  interacting = false
+  window.removeEventListener('pointerup', end)
+  window.removeEventListener('pointercancel', end)
+  window.removeEventListener('blur', end)
+  emit('interactionEnd')
+}
+function start() {
+  if (interacting)
+    return
+  interacting = true
+  emit('interactionStart')
+  window.addEventListener('pointerup', end)
+  window.addEventListener('pointercancel', end)
+  window.addEventListener('blur', end)
+}
+onUnmounted(end)
 const model = defineModel<number>({ required: true })
 </script>
 
@@ -23,6 +45,8 @@ const model = defineModel<number>({ required: true })
       :max="max ?? 100"
       :step="1"
       :aria-label="label"
+      @pointerdown="start"
+      @value-commit="end"
       @update:model-value="model = $event?.[0] ?? 0"
     />
   </div>

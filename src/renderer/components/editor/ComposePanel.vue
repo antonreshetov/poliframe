@@ -408,9 +408,11 @@ const customCells = computed(() => {
       <NumberField
         v-model="measure.gap"
         label="Gap"
-        :disabled="e.state.panels.length < 2"
+        :disabled="e.state.layout !== 'grid' && e.state.panels.length < 2"
         :max="e.state.units === 'percent' ? 15 : 400"
         :suffix="suffix"
+        @interaction-start="e.beginSpacing"
+        @interaction-end="e.endSpacing"
       />
       <div class="space-y-1.5">
         <div class="flex items-center justify-between gap-2">
@@ -429,6 +431,8 @@ const customCells = computed(() => {
           label="All"
           :max="e.state.units === 'percent' ? 15 : 400"
           :suffix="suffix"
+          @interaction-start="e.beginSpacing"
+          @interaction-end="e.endSpacing"
         /><template v-else>
           <NumberField
             v-for="edge in ['top', 'right', 'bottom', 'left'] as const"
@@ -437,6 +441,8 @@ const customCells = computed(() => {
             :label="edge[0]!.toUpperCase() + edge.slice(1)"
             :max="e.state.units === 'percent' ? 15 : 400"
             :suffix="suffix"
+            @interaction-start="e.beginSpacing"
+            @interaction-end="e.endSpacing"
           />
         </template>
       </div>

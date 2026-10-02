@@ -98,18 +98,34 @@ async function chooseImages(paths?: unknown) {
     }
     files = paths
   }
-  const photos = []
-  const errors = []
-  for (const file of files) {
-    try {
-      photos.push(await assets.import(file))
-    }
-    catch (error) {
-      errors.push(
-        `${path.basename(file)}: ${error instanceof Error ? error.message : 'Cannot load image'}`,
-      )
+  const results: {
+    photo?: Awaited<ReturnType<AssetRegistry['import']>>
+    error?: string
+  }[] = []
+  let next = 0
+  const importNext = async () => {
+    while (next < files.length) {
+      const index = next++
+      const file = files[index]!
+      try {
+        results[index] = { photo: await assets.import(file) }
+      }
+      catch (error) {
+        results[index] = {
+          error: `${path.basename(file)}: ${error instanceof Error ? error.message : 'Cannot load image'}`,
+        }
+      }
     }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(2, files.length) }, importNext),
+  )
+  const photos = results.flatMap(result =>
+    result.photo ? [result.photo] : [],
+  )
+  const errors = results.flatMap(result =>
+    result.error ? [result.error] : [],
+  )
   return { photos, errors }
 }
 

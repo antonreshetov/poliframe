@@ -107,6 +107,7 @@ function setup(t) {
     source('src/renderer/composables/useEditor.ts'),
     {
       '../../shared/defaults': defaultsModule,
+      '../../shared/layout': evaluate(source('src/shared/layout.ts')),
     },
     window,
   )
@@ -378,4 +379,97 @@ test('Option on a through divider splits the hovered segment and cancellation re
   handlers.get('pointercancel')({ type: 'pointercancel' })
   assert.equal(JSON.stringify(editor.state.grid), original)
   assert.equal(controls.draftGrid.value, null)
+})
+
+test('spacing drag updates exact local geometry without native renders until release', async (t) => {
+  const { editor, api } = setup(t)
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  editor.state.layout = 'grid'
+  editor.state.grid = defaultsModule.gridTemplate('2x2', editor.state.panels.map(p => p.photoId))
+  await new Promise(resolve => setTimeout(resolve, 20))
+  const requests = []
+  const render = api.preview
+  api.preview = async (snapshot) => {
+    requests.push(snapshot)
+    return render(snapshot)
+  }
+  editor.beginSpacing()
+  for (const value of [3, 6, 10]) {
+    editor.state.percent.gap = value
+    editor.state.percent.frame = value
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const expected = await evaluate(source('src/shared/layout.ts')).calculateLayout(editor.state, Object.values(editor.photos))
+    assert.deepEqual(JSON.parse(JSON.stringify(editor.interactivePreview.layout)), JSON.parse(JSON.stringify(expected)))
+  }
+  assert.equal(requests.length, 0, 'slider motion must not enqueue heavy native work')
+  editor.endSpacing()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].percent.frame, 10)
+  assert.equal(editor.interactivePreview, null)
+})
+
+test('imported thumbnails appear before native preview finishes', async (t) => {
+  const { editor, api } = setup(t)
+  let complete
+  const render = api.preview
+  api.preview = snapshot => new Promise((resolve) => {
+    complete = async () => resolve(await render(snapshot))
+  })
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal(editor.preview, null)
+  assert.ok(editor.interactivePreview.layout.cells.length)
+  assert.equal(editor.interactivePreview.gestureImages[0].dataUrl, 'data:,')
+  await complete()
+  await flush()
+  assert.ok(editor.preview)
+  assert.equal(editor.interactivePreview, null)
+})
+
+test('caption spacing keeps updating during the gesture without starving the renderer', async (t) => {
+  const { editor, api } = setup(t)
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  editor.state.caption.enabled = true
+  let count = 0
+  const render = api.preview
+  api.preview = async (snapshot) => {
+    count++
+    await new Promise(resolve => setTimeout(resolve, 5))
+    return render(snapshot)
+  }
+  editor.beginSpacing()
+  const initialRevision = editor.preview.revision
+  for (let i = 1; i <= 12; i++) {
+    editor.state.percent.frame = i
+    await new Promise(resolve => setTimeout(resolve, 15))
+  }
+  assert.ok(count >= 2, 'leading/trailing renders run while slider keeps moving')
+  assert.ok(editor.preview.revision > initialRevision)
+  assert.equal(editor.interactivePreview, null, 'native caption layout must not be approximated')
+  editor.endSpacing()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(editor.rendering, false)
+})
+
+test('an in-flight native render cannot replace newer local spacing geometry', async (t) => {
+  const { editor, api } = setup(t)
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  let complete
+  const render = api.preview
+  api.preview = snapshot => new Promise((resolve) => {
+    complete = async () => resolve(await render(snapshot))
+  })
+  editor.state.mat = '#000000'
+  await new Promise(resolve => setTimeout(resolve, 10))
+  editor.beginSpacing()
+  editor.state.percent.frame = 12
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const geometry = JSON.stringify(editor.interactivePreview.layout)
+  await complete()
+  await flush()
+  assert.equal(JSON.stringify(editor.interactivePreview.layout), geometry)
 })
