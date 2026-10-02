@@ -486,3 +486,21 @@ test('Escape clears cell selection and returns focus to the canvas', async (t) =
   assert.equal(focused, true)
   controls.viewport.value = null
 })
+
+
+test('background press clears selection without intercepting cell controls', async (t) => {
+  const { editor, controls } = await gridFixture(t)
+  const id = controls.layout.value.cells[0].id
+  let focused = 0
+  controls.viewport.value = { focus: () => focused++ }
+  const background = { closest: () => null }
+  editor.selected = [id]
+  controls.panStart({ button: 0, target: background, currentTarget: background })
+  assert.equal(editor.selected.length, 0)
+  assert.equal(focused, 1)
+  editor.selected = [id]
+  controls.panStart({ button: 0, target: { closest: () => ({}) }, currentTarget: background })
+  assert.equal(editor.selected[0], id)
+  assert.equal(focused, 1)
+  controls.viewport.value = null
+})

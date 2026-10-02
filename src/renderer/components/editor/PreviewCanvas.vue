@@ -732,7 +732,13 @@ function select(id: string, event: MouseEvent) {
       : [...e.selected, id]
     : [id]
 }
+function clearSelection() {
+  e.selected = []
+  viewport.value?.focus({ preventScroll: true })
+}
 function panStart(event: PointerEvent) {
+  if (event.button === 0 && event.target === event.currentTarget)
+    clearSelection()
   if (
     (event.target as HTMLElement).closest('button')
     || scale.value <= fitScale.value
@@ -762,8 +768,7 @@ function key(event: KeyboardEvent) {
   const index = cells.findIndex(c => c.id === e.selected[0])
   if (event.key === 'Escape') {
     event.preventDefault()
-    e.selected = []
-    viewport.value?.focus({ preventScroll: true })
+    clearSelection()
   }
   else if (event.key === 'Delete' || event.key === 'Backspace') {
     event.preventDefault()
