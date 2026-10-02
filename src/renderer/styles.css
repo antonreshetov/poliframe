@@ -225,14 +225,14 @@
 .sidebar [data-slot="checkbox"][data-state="checked"] {
     background: var(--primary);
 }
-.toolbar [data-slot="button"] {
+.toolbar button {
     height: 24px;
     min-height: 24px;
     border-radius: 5px;
     padding: 0 10px;
     font-size: 13px;
 }
-.toolbar [data-slot="button"] svg {
+.toolbar button svg {
     width: 16px;
     height: 16px;
 }

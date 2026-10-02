@@ -57,7 +57,7 @@ const sources = computed(() => [
   <Popover>
     <PopoverTrigger as-child>
       <Button
-        variant="outline"
+        variant="secondary"
         size="icon"
         aria-label="Export settings"
         title="Export settings"

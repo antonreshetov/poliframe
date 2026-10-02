@@ -39,7 +39,7 @@ async function apply() {
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
       >
         <Bookmark />{{
