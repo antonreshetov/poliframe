@@ -1335,7 +1335,19 @@ function key(event: KeyboardEvent) {
   bottom: -27px;
   left: calc(50% - 11px);
 }
+@keyframes grid-tools-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 .grid-tools {
+  animation: grid-tools-appear 120ms ease-out;
+  transition:
+    left 150ms ease-in-out,
+    top 150ms ease-in-out;
   position: absolute;
   top: 16px;
   left: 50%;
@@ -1343,5 +1355,11 @@ function key(event: KeyboardEvent) {
   display: flex;
   gap: 2px;
   white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .grid-tools {
+    animation: none;
+    transition: none;
+  }
 }
 </style>
