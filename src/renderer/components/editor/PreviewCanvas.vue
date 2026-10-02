@@ -306,6 +306,8 @@ const dividers = computed(() => {
     width: number
     height: number
     span: number
+    containerStart: number
+    pairLength: number
   }[] = []
   function walk(node: GridNode) {
     if (node.type === 'leaf')
@@ -344,6 +346,16 @@ const dividers = computed(() => {
         width: horizontal ? 0 : right - x,
         height: horizontal ? bottom - y : 0,
         span: horizontal ? right - x : bottom - y,
+        containerStart: horizontal ? x : y,
+        pairLength: horizontal
+          ? Math.max(...before.map(c => c.x + c.width))
+          - Math.min(...before.map(c => c.x))
+          + Math.max(...after.map(c => c.x + c.width))
+          - Math.min(...after.map(c => c.x))
+          : Math.max(...before.map(c => c.y + c.height))
+            - Math.min(...before.map(c => c.y))
+            + Math.max(...after.map(c => c.y + c.height))
+            - Math.min(...after.map(c => c.y)),
       })
     }
     node.children.forEach(walk)
@@ -351,6 +363,119 @@ const dividers = computed(() => {
   walk(draftGrid.value ?? e.state.grid)
   return result
 })
+type Divider = (typeof dividers.value)[number]
+const dividerFeedback = ref<{
+  horizontal: boolean
+  position: number
+  lo: number
+  hi: number
+  percent?: number
+  x?: number
+  y?: number
+  snapped?: boolean
+} | null>(null)
+function showDivider(items: Divider[], position: number) {
+  const horizontal = items[0]!.node.axis === 'horizontal'
+  dividerFeedback.value = {
+    horizontal,
+    position,
+    lo: Math.min(...items.map(item => (horizontal ? item.y : item.x))),
+    hi: Math.max(
+      ...items.map(item =>
+        horizontal ? item.y + item.height : item.x + item.width,
+      ),
+    ),
+  }
+}
+let lastDividerHover: { event: PointerEvent, divider: Divider } | undefined
+function leaveDivider() {
+  lastDividerHover = undefined
+  if (!resizing.value)
+    dividerFeedback.value = null
+}
+function modifierChanged(event: KeyboardEvent) {
+  if (lastDividerHover) {
+    hoverDivider(
+      {
+        clientX: lastDividerHover.event.clientX,
+        clientY: lastDividerHover.event.clientY,
+        currentTarget: lastDividerHover.event.currentTarget,
+        altKey: event.altKey,
+      } as PointerEvent,
+      lastDividerHover.divider,
+    )
+  }
+}
+onMounted(() => {
+  window.addEventListener('keydown', modifierChanged)
+  window.addEventListener('keyup', modifierChanged)
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', modifierChanged)
+  window.removeEventListener('keyup', modifierChanged)
+})
+function hoverDivider(event: PointerEvent, divider: Divider) {
+  if (resizing.value)
+    return
+  lastDividerHover = {
+    event: {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      currentTarget: event.currentTarget,
+    } as PointerEvent,
+    divider,
+  }
+  const horizontal = divider.node.axis === 'horizontal'
+  const position = horizontal ? divider.x : divider.y
+  showDivider(
+    event.altKey
+      ? [divider]
+      : dividers.value.filter(
+          item =>
+            item.node.axis === divider.node.axis
+            && Math.abs((horizontal ? item.x : item.y) - position)
+            < (horizontal ? layout.value!.width : layout.value!.height) * 0.002,
+        ),
+    position,
+  )
+  const rows = divider.node.children.slice(divider.index, divider.index + 2)
+  const first = rows[0]
+  const second = rows[1]
+  if (
+    event.altKey
+    && first?.type === 'split'
+    && second?.type === 'split'
+    && first.axis !== divider.node.axis
+    && first.axis === second.axis
+    && first.weights.length === second.weights.length
+    && first.weights.every(
+      (weight, i) =>
+        Math.abs(
+          weight / first.weights.reduce((a, b) => a + b, 0)
+          - second.weights[i]! / second.weights.reduce((a, b) => a + b, 0),
+        ) <= 0.000001,
+    )
+  ) {
+    const bounds = (
+      event.currentTarget as HTMLElement
+    ).parentElement!.getBoundingClientRect()
+    const cross = horizontal
+      ? (event.clientY - bounds.top) / scale.value
+      : (event.clientX - bounds.left) / scale.value
+    const start = horizontal ? divider.y : divider.x
+    const span = horizontal ? divider.height : divider.width
+    const total = first.weights.reduce((a, b) => a + b, 0)
+    let lo = start
+    for (const [index, weight] of first.weights.entries()) {
+      const hi = lo + (span * weight) / total
+      if (cross <= hi || index === first.weights.length - 1) {
+        dividerFeedback.value = { horizontal, position, lo, hi }
+        break
+      }
+      lo = hi
+    }
+  }
+}
 function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
   event.stopPropagation()
   event.preventDefault()
@@ -368,7 +493,7 @@ function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
   let active = divider
   if (event.altKey) {
     const parent = divider.node
-    const rows = parent.children
+    const rows = parent.children.slice(divider.index, divider.index + 2)
     const first = rows[0]
     if (
       first?.type === 'split'
@@ -378,18 +503,17 @@ function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
           row.type === 'split'
           && row.axis === first.axis
           && row.children.length === first.children.length
-          && row.children.every(child => child.type === 'leaf')
           && row.weights.every(
             (w, i) =>
               Math.abs(
                 w / row.weights.reduce((a, b) => a + b, 0)
                 - first.weights[i]! / first.weights.reduce((a, b) => a + b, 0),
-              ) < 0.001,
+              ) <= 0.000001,
           ),
       )
     ) {
       const oldAxis = parent.axis
-      const oldWeights = [...parent.weights]
+      const oldWeights = parent.weights.slice(divider.index, divider.index + 2)
       const columns = first.children.map((_, index): GridNode => ({
         id: crypto.randomUUID(),
         type: 'split',
@@ -411,16 +535,29 @@ function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
         accumulated += weight / total
         return cross <= start + accumulated * span
       })
-      parent.axis = first.axis
-      parent.children = columns
-      parent.weights = [...first.weights]
-      active = {
-        ...divider,
-        node: columns[Math.max(0, column)] as Extract<
-          GridNode,
-          { type: 'split' }
-        >,
+      if (parent.children.length === 2) {
+        parent.axis = first.axis
+        parent.children = columns
+        parent.weights = [...first.weights]
       }
+      else {
+        parent.children.splice(divider.index, 2, {
+          id: crypto.randomUUID(),
+          type: 'split',
+          axis: first.axis,
+          children: columns,
+          weights: [...first.weights],
+        })
+        parent.weights.splice(
+          divider.index,
+          2,
+          oldWeights[0]! + oldWeights[1]!,
+        )
+      }
+      active = dividers.value.find(
+        item =>
+          item.node.id === columns[Math.max(0, column)]!.id && item.index === 0,
+      )!
     }
   }
   const candidates = event.altKey
@@ -432,70 +569,92 @@ function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
             (horizontal ? item.x : item.y)
             - (horizontal ? divider.x : divider.y),
           )
-          * scale.value
-          < 2,
+          < (horizontal ? layout.value!.width : layout.value!.height) * 0.002,
       )
+  const position = horizontal ? active.x : active.y
   const existingLines = dividers.value
-    .filter(
-      item =>
-        item.node.axis === active.node.axis && !candidates.includes(item),
-    )
+    .filter(item => item.node.axis === active.node.axis)
     .map(item => (horizontal ? item.x : item.y))
-  const snapped = new Map<string, number>()
-  const initial = candidates.map(item => ({
-    item,
-    weights: [...item.node.weights],
-  }))
+    .filter(
+      line =>
+        Math.abs(line - position)
+        > (horizontal ? layout.value!.width : layout.value!.height) * 0.002,
+    )
+  const initial = candidates.map((item) => {
+    const weights = [...item.node.weights]
+    const pair = weights[item.index]! + weights[item.index + 1]!
+    const origin
+      = (horizontal ? item.x : item.y)
+        - (item.pairLength * weights[item.index]!) / pair
+    return { item, pair, origin }
+  })
+  const first = initial[0]!
+  const targets = [
+    ...[1 / 3, 0.5, 2 / 3].map(f => first.origin + first.item.pairLength * f),
+    ...Array.from(
+      {
+        length:
+          active.node.children.length > 2 ? active.node.children.length - 1 : 0,
+      },
+      (_, i) =>
+        active.containerStart
+        + (active.span * (i + 1)) / active.node.children.length,
+    ),
+    ...existingLines,
+  ]
+  let snapped: number | undefined
   const start = horizontal ? event.clientX : event.clientY
+  showDivider(candidates, position)
+  const bounds = target.parentElement?.getBoundingClientRect() ?? {
+    left: 0,
+    top: 0,
+  }
   const applyMove = (ev: PointerEvent) => {
-    for (const { item, weights } of initial) {
-      const total = weights.reduce((a, b) => a + b, 0)
-      const a = weights[item.index]!
-      const b = weights[item.index + 1]!
-      const pair = a + b
-      const delta
-        = (((horizontal ? ev.clientX : ev.clientY) - start)
-          / (item.span * scale.value))
-        * total
-      let fraction = Math.max(0.1, Math.min(0.9, (a + delta) / pair))
-      const snapKey = `${item.node.id}:${item.index}`
-      if (!ev.metaKey && !ev.ctrlKey) {
-        const screenSpan = (pair / total) * item.span * scale.value
-        const before = weights
-          .slice(0, item.index)
-          .reduce((sum, weight) => sum + weight, 0)
-        const equal
-          = ((total * (item.index + 1)) / weights.length - before) / pair
-        const position = horizontal ? item.x : item.y
-        const targets = [
-          1 / 3,
-          0.5,
-          2 / 3,
-          equal,
-          ...existingLines.map(
-            line =>
-              a / pair + (((line - position) / item.span) * total) / pair,
-          ),
-        ].filter(value => value >= 0.1 && value <= 0.9)
-        let snap = snapped.get(snapKey)
-        if (snap !== undefined && Math.abs(snap - fraction) * screenSpan > 9) {
-          snapped.delete(snapKey)
-          snap = undefined
-        }
-        if (snap === undefined) {
-          snap = targets
-            .sort((x, y) => Math.abs(x - fraction) - Math.abs(y - fraction))
-            .find(value => Math.abs(value - fraction) * screenSpan <= 6)
-          if (snap !== undefined)
-            snapped.set(snapKey, snap)
-        }
-        fraction = snap ?? Math.round(fraction * 100) / 100
+    let next
+      = position + ((horizontal ? ev.clientX : ev.clientY) - start) / scale.value
+    if (!ev.metaKey) {
+      if (snapped !== undefined && Math.abs(snapped - next) * scale.value > 9)
+        snapped = undefined
+      if (snapped === undefined) {
+        snapped = targets
+          .slice()
+          .sort((a, b) => Math.abs(a - next) - Math.abs(b - next))
+          .find(value => Math.abs(value - next) * scale.value <= 6)
       }
-      else {
-        snapped.delete(snapKey)
-      }
+      next
+        = snapped
+          ?? first.origin
+          + (Math.round(((next - first.origin) / first.item.pairLength) * 100)
+            / 100)
+          * first.item.pairLength
+    }
+    else {
+      snapped = undefined
+    }
+    const lo = Math.max(
+      ...initial.map(({ item, origin }) => origin + item.pairLength * 0.1),
+    )
+    const hi = Math.min(
+      ...initial.map(({ item, origin }) => origin + item.pairLength * 0.9),
+    )
+    const clamped = Math.max(lo, Math.min(hi, next))
+    if (clamped !== next)
+      snapped = undefined
+    next = clamped
+    for (const { item, pair, origin } of initial) {
+      const fraction = (next - origin) / item.pairLength
       item.node.weights[item.index] = fraction * pair
       item.node.weights[item.index + 1] = (1 - fraction) * pair
+    }
+    dividerFeedback.value = {
+      ...dividerFeedback.value!,
+      position: next,
+      snapped: snapped !== undefined,
+      percent: Math.round(
+        ((next - first.origin) / first.item.pairLength) * 100,
+      ),
+      x: ev.clientX - bounds.left + 14,
+      y: ev.clientY - bounds.top + 16,
     }
   }
   let frame = 0
@@ -524,13 +683,15 @@ function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
       applyMove(pending)
       changed = true
     }
-    target.removeEventListener('pointermove', move)
+    window.removeEventListener('pointermove', move, true)
     target.removeEventListener('pointerup', end)
     target.removeEventListener('pointercancel', end)
     window.removeEventListener('pointerup', end, true)
     window.removeEventListener('pointercancel', end, true)
     finishResize = undefined
     resizing.value = false
+    dividerFeedback.value = null
+    lastDividerHover = undefined
     if (ev?.type === 'pointerup' && changed && draftGrid.value) {
       e.checkpoint()
       e.state.grid = JSON.parse(JSON.stringify(draftGrid.value))
@@ -543,7 +704,7 @@ function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
   finishResize = end
   window.addEventListener('pointerup', end, true)
   window.addEventListener('pointercancel', end, true)
-  target.addEventListener('pointermove', move)
+  window.addEventListener('pointermove', move, true)
   target.addEventListener('pointerup', end)
   target.addEventListener('pointercancel', end)
 }
@@ -778,7 +939,49 @@ function key(event: KeyboardEvent) {
               divider.node.axis === 'horizontal' ? 'col-resize' : 'row-resize',
           }"
           @pointerdown="resize($event, divider)"
+          @pointermove="hoverDivider($event, divider)"
+          @pointerleave="leaveDivider"
         />
+        <template v-if="dividerFeedback">
+          <div
+            class="divider-line"
+            :style="{
+              left: `${(dividerFeedback.horizontal ? dividerFeedback.position : dividerFeedback.lo) * scale}px`,
+              top: `${(dividerFeedback.horizontal ? dividerFeedback.lo : dividerFeedback.position) * scale}px`,
+              width: dividerFeedback.horizontal
+                ? '2px'
+                : `${(dividerFeedback.hi - dividerFeedback.lo) * scale}px`,
+              height: dividerFeedback.horizontal
+                ? `${(dividerFeedback.hi - dividerFeedback.lo) * scale}px`
+                : '2px',
+            }"
+          />
+          <div
+            v-if="dividerFeedback.snapped"
+            class="divider-line snap-guide"
+            :style="{
+              left: dividerFeedback.horizontal
+                ? `${dividerFeedback.position * scale}px`
+                : '0',
+              top: dividerFeedback.horizontal
+                ? '0'
+                : `${dividerFeedback.position * scale}px`,
+              width: dividerFeedback.horizontal ? '1px' : '100%',
+              height: dividerFeedback.horizontal ? '100%' : '1px',
+            }"
+          />
+          <div
+            v-if="dividerFeedback.percent !== undefined"
+            class="divider-percent"
+            :style="{
+              left: `${dividerFeedback.x}px`,
+              top: `${dividerFeedback.y}px`,
+            }"
+          >
+            {{ dividerFeedback.percent }}% /
+            {{ 100 - dividerFeedback.percent }}%
+          </div>
+        </template>
       </template>
     </div>
     <div
@@ -904,8 +1107,26 @@ function key(event: KeyboardEvent) {
   position: absolute;
   touch-action: none;
 }
-.divider:hover {
-  background: #3b82f688;
+.divider-line {
+  position: absolute;
+  pointer-events: none;
+  background: #3b82f6;
+  box-shadow: 0 0 0 1px #ffffff59;
+  transform: translate(-1px, -1px);
+}
+.snap-guide {
+  box-shadow: none;
+}
+.divider-percent {
+  position: absolute;
+  pointer-events: none;
+  white-space: nowrap;
+  border-radius: 4px;
+  padding: 3px 5px;
+  background: #242424;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
 }
 .outer-tracks {
   position: absolute;
