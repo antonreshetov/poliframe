@@ -1142,10 +1142,10 @@ function key(event: KeyboardEvent) {
   min-width: 0;
   min-height: 0;
   background: repeating-conic-gradient(
-      var(--muted) 0% 25%,
-      color-mix(in srgb, var(--muted), var(--background) 35%) 0% 50%
+      var(--background) 0% 25%,
+      color-mix(in srgb, var(--muted-foreground) 8%, var(--background)) 0% 50%
     )
-    0/20px 20px;
+    0/24px 24px;
   touch-action: none;
 }
 .preview-image {
@@ -1169,7 +1169,7 @@ function key(event: KeyboardEvent) {
   border-color: #8888;
 }
 .cell-overlay.selected {
-  border-color: #3b82f6;
+  border-color: var(--primary);
 }
 .divider {
   position: absolute;
@@ -1178,7 +1178,7 @@ function key(event: KeyboardEvent) {
 .divider-line {
   position: absolute;
   pointer-events: none;
-  background: #3b82f6;
+  background: var(--primary);
   box-shadow: 0 0 0 1px #ffffff59;
   transform: translate(-1px, -1px);
 }
