@@ -1,6 +1,7 @@
 dist
 build/main
 build/renderer
+build/shared
 
 node_modules
 .DS_Store

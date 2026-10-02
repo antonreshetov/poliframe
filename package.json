@@ -1,14 +1,14 @@
 {
-  "name": "electron-vue-vite-boilerplate",
-  "version": "2.3.7",
+  "name": "poliframe",
+  "version": "0.1.0",
   "packageManager": "pnpm@10.29.2",
-  "description": "Electron Vue Vite Boilerplate for you next project",
+  "description": "Compose photographs, captions and print layouts",
   "author": {
     "name": "Anton Reshetov",
     "email": "reshetov.art@gmail.com"
   },
   "license": "MIT",
-  "repository": "https://github.com/antonreshetov/electron-vue-vite-boilerplate",
+  "repository": "https://github.com/antonreshetov/poliframe",
   "main": "build/main/index.js",
   "engines": {
     "node": ">=24.14.0",
@@ -35,9 +35,19 @@
     "test": "pnpm build:main && node --test tests/*.test.cjs"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@lucide/vue": "^1.50.0",
+    "@vueuse/core": "^15.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "electron-store": "^11.0.2",
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "exiftool-vendored": "^38.3.0",
+    "reka-ui": "^2.10.5",
+    "shadcn-vue": "^2.8.2",
+    "sharp": "0.35.5",
+    "tailwind-merge": "^3.7.0",
+    "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.5.1",
@@ -45,8 +55,8 @@
     "@commitlint/config-conventional": "^21.2.3",
     "@electron/rebuild": "^4.2.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.4",
+    "@types/web-bluetooth": "^0.0.21",
     "@vitejs/plugin-vue": "^6.0.9",
     "bumpp": "^12.3.0",
     "concurrently": "^10.0.5",
@@ -64,7 +74,7 @@
     "typescript": "~6.0.3",
     "vite": "^8.3.2",
     "vue": "^3.5.43",
-    "vue-router": "^5.3.1",
+    "vue-component-type-helpers": "^3.3.12",
     "vue-tsc": "^3.3.12",
     "wait-on": "^9.5.1"
   },
@@ -79,17 +89,11 @@
     "pre-commit": "npx lint-staged",
     "commit-msg": "npx commitlint --edit $1"
   },
-  "lint-staged": {
-    "*.{js,ts,vue}": [
-      "prettier --write",
-      "eslint --fix"
-    ]
-  },
   "electronmon": {
     "patterns": [
-      "!src/**/*",
-      "!scripts/**/*",
-      "build/main/**/*"
+      "!**/*",
+      "build/main/**/*.js",
+      "build/shared/**/*.js"
     ]
   }
 }

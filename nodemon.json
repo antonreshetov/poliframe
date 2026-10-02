@@ -1,5 +1,8 @@
 {
-  "watch": ["src/main"],
+  "watch": [
+    "src/main",
+    "src/shared"
+  ],
   "ext": "ts,json",
   "exec": "tsc -p tsconfig.main.json",
   "delay": 1000
