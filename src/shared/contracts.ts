@@ -112,6 +112,7 @@ export interface CaptionBlock extends Rect {
   photoId: string | null
 }
 export interface LayoutResult {
+  masks?: Rect[]
   width: number
   height: number
   nativeWidth: number

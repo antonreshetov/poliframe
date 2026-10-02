@@ -62,7 +62,10 @@ const resizing = ref(false)
 let finishResize: (() => void) | undefined
 onUnmounted(() => finishResize?.())
 const layout = computed(() => {
-  const base = dragBacking.value?.layout ?? e.preview?.layout
+  const base
+    = e.interactivePreview?.layout
+      ?? dragBacking.value?.layout
+      ?? e.preview?.layout
   if (!base || !draftGrid.value || !base.cells.length)
     return base
   const x = Math.min(...base.cells.map(cell => cell.x))
@@ -92,8 +95,14 @@ watch(
 watch(
   () => e.state.grid,
   () => {
-    if (resizing.value || e.state.layout !== 'grid' || !e.preview)
+    if (
+      e.spacingEditing
+      || resizing.value
+      || e.state.layout !== 'grid'
+      || !e.preview
+    ) {
       return
+    }
     dragBacking.value ??= e.preview
     draftGrid.value = JSON.parse(JSON.stringify(e.state.grid))
   },
@@ -125,7 +134,7 @@ const compositionImageStyle = computed(() => {
   }
 })
 function liveCellSource(cell: Rect & { photoId: string | null }) {
-  return dragBacking.value?.gestureImages?.find(
+  return (e.interactivePreview ?? dragBacking.value)?.gestureImages?.find(
     item => item.photoId === cell.photoId,
   )
 }
@@ -254,6 +263,8 @@ watch(
     const backing = e.preview
     if (
       resizing.value
+      || e.spacingEditing
+      || e.interactivePreview
       || !region
       || !backing
       || e.rendering
@@ -857,11 +868,12 @@ function key(event: KeyboardEvent) {
         }"
       >
       <div
-        v-if="draftGrid && layout"
+        v-if="(draftGrid || e.interactivePreview) && layout"
+        :style="e.interactivePreview ? { background: e.state.mat } : {}"
         class="pointer-events-none absolute inset-0"
       >
         <div
-          v-for="cell in dragBacking?.layout.cells"
+          v-for="cell in e.interactivePreview ? [] : dragBacking?.layout.cells"
           :key="`old-${cell.id}`"
           class="absolute"
           :style="{
@@ -893,6 +905,18 @@ function key(event: KeyboardEvent) {
             :style="liveCellImage(cell)!"
           >
         </div>
+        <div
+          v-for="(mask, index) in e.interactivePreview?.layout.masks ?? []"
+          :key="`mask-${index}`"
+          class="absolute"
+          :style="{
+            background: e.state.mat,
+            left: `${mask.x * scale}px`,
+            top: `${mask.y * scale}px`,
+            width: `${mask.width * scale}px`,
+            height: `${mask.height * scale}px`,
+          }"
+        />
       </div>
       <div
         v-if="e.state.layout === 'grid'"

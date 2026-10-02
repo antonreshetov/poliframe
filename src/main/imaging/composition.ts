@@ -407,8 +407,6 @@ export async function gestureImages(
   snapshot: Composition,
   assets: ImageAsset[],
 ): Promise<NonNullable<PreviewResult['gestureImages']>> {
-  if (snapshot.layout !== 'grid')
-    return []
   const result: NonNullable<PreviewResult['gestureImages']> = []
   const visible = new Set<string>()
   const visit = (node: Composition['grid']) => {
@@ -420,7 +418,9 @@ export async function gestureImages(
       node.children.forEach(visit)
     }
   }
-  visit(snapshot.grid)
+  if (snapshot.layout === 'grid')
+    visit(snapshot.grid)
+  else snapshot.panels.forEach(panel => visible.add(panel.photoId))
   for (const panel of snapshot.panels) {
     if (!visible.has(panel.photoId))
       continue
