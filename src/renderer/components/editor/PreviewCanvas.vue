@@ -840,6 +840,7 @@ function key(event: KeyboardEvent) {
     <div
       v-if="e.state.panels.length || e.state.layout === 'grid'"
       class="preview-image"
+      :class="{ 'is-interacting': resizing || dragging || e.spacingEditing }"
       :style="{
         width: `${(layout?.width ?? 1) * scale}px`,
         height: `${(layout?.height ?? 1) * scale}px`,
@@ -1165,8 +1166,8 @@ function key(event: KeyboardEvent) {
 .cell-overlay.empty {
   background: #8888881a;
 }
-.cell-overlay:hover {
-  border-color: #8888;
+.preview-image:not(.is-interacting) .cell-overlay:hover {
+  border-color: var(--primary);
 }
 .cell-overlay.selected {
   border-color: var(--primary);
@@ -1215,9 +1216,13 @@ function key(event: KeyboardEvent) {
   z-index: 2;
   opacity: 0;
 }
-.add-track:hover,
+.preview-viewport:hover .preview-image:not(.is-interacting) .add-track,
 .add-track:focus-visible {
   opacity: 1;
+}
+.add-track:hover {
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 .add-track.left {
   left: -27px;
