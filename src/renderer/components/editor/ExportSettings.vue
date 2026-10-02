@@ -19,10 +19,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useEditorContext } from '@/composables/useEditor'
 import ChoiceField from './ChoiceField.vue'
 import NumberField from './NumberField.vue'
+import ToggleGroup from './SegmentedControl.vue'
+import ToggleGroupItem from './SegmentedControlItem.vue'
 
 const e = useEditorContext()
 const depth = computed({
@@ -122,7 +123,6 @@ const sources = computed(() => [
           <span>Format</span>
           <ToggleGroup
             orientation="horizontal"
-            :spacing="1"
             type="single"
             :model-value="e.state.output.format"
             @update:model-value="

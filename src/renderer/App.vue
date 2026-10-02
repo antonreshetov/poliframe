@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Download, Minus, Plus, X } from '@lucide/vue'
+import { Download, X, ZoomIn, ZoomOut } from '@lucide/vue'
 import { provide, ref, watch } from 'vue'
 import AnnotatePanel from '@/components/editor/AnnotatePanel.vue'
 import ComposePanel from '@/components/editor/ComposePanel.vue'
@@ -88,7 +88,7 @@ watch(
       <footer class="toolbar">
         <div class="flex items-center gap-1">
           <Button
-            variant="ghost"
+            variant="secondary"
             size="icon-sm"
             aria-label="Zoom out"
             :disabled="effectiveZoom <= fitZoom + 0.1 || !e.preview"
@@ -99,26 +99,28 @@ watch(
                   : (zoom ?? effectiveZoom) / 1.5
             "
           >
-            <Minus />
+            <ZoomOut />
           </Button><span class="w-12 text-center text-xs tabular-nums">{{
             `${Math.round(zoom ?? effectiveZoom)}%`
           }}</span><Button
-            variant="ghost"
+            variant="secondary"
             size="icon-sm"
             aria-label="Zoom in"
             :disabled="effectiveZoom >= 99.9 || !e.preview"
             @click="zoom = Math.min(100, (zoom ?? effectiveZoom) * 1.5)"
           >
-            <Plus />
+            <ZoomIn />
           </Button><Button
-            variant="ghost"
+            variant="secondary"
             size="sm"
+            :class="{ 'text-primary': zoom === null }"
             @click="zoom = null"
           >
             Fit
           </Button><Button
-            variant="ghost"
+            variant="secondary"
             size="sm"
+            :class="{ 'text-primary': zoom === 100 }"
             @click="zoom = 100"
           >
             100%
@@ -208,8 +210,8 @@ watch(
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
+  gap: 10px;
+  padding: 10px 16px;
   border-top: 1px solid var(--border);
   min-height: 44px;
 }

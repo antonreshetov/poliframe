@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import type { GridNode } from '../../../shared/contracts'
-import { CircleCheck, Crop, Plus, TriangleAlert, X } from '@lucide/vue'
+import { CircleCheck, CircleX, Crop, Images, TriangleAlert } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useEditorContext } from '@/composables/useEditor'
 import { gridTemplate, matColors } from '../../../shared/defaults'
 import { gridCells } from '../../../shared/layout'
 import CheckField from './CheckField.vue'
 import ChoiceField from './ChoiceField.vue'
 import NumberField from './NumberField.vue'
+import ToggleGroup from './SegmentedControl.vue'
+import ToggleGroupItem from './SegmentedControlItem.vue'
 
 const e = useEditorContext()
 const dragging = ref('')
@@ -168,7 +169,7 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
       <div
         v-for="(panel, i) in e.state.panels"
         :key="panel.photoId"
-        class="flex items-center gap-2 rounded-md bg-muted p-1"
+        class="photo-row flex items-center gap-2 rounded-md bg-muted p-1"
         draggable="true"
         @dragstart="dragging = panel.photoId"
         @dragover.prevent
@@ -223,7 +224,7 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
           :aria-label="`Remove image ${i + 1}`"
           @click="e.remove(panel.photoId)"
         >
-          <X />
+          <CircleX class="remove-photo-icon" />
         </Button>
       </div>
       <div
@@ -238,7 +239,7 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
           :disabled="e.importing"
           @click="e.add()"
         >
-          <Plus />{{ e.importing ? "Importing…" : "Add image" }}
+          <Images />{{ e.importing ? "Importing…" : "Add image" }}
         </Button>
       </div>
     </section>
@@ -249,11 +250,8 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
         </h2>
         <ToggleGroup
           orientation="horizontal"
-          :spacing="1"
           :model-value="e.state.layout"
           type="single"
-          variant="outline"
-          size="sm"
           @update:model-value="setLayout"
         >
           <ToggleGroupItem value="horizontal">
@@ -327,11 +325,8 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
         </h2>
         <ToggleGroup
           orientation="horizontal"
-          :spacing="1"
           :model-value="e.state.units"
           type="single"
-          variant="outline"
-          size="sm"
           @update:model-value="setUnits"
         >
           <ToggleGroupItem value="percent">
@@ -386,15 +381,15 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
         <h2 class="text-xs">
           Mat color
         </h2>
-        <div class="flex gap-1.5 py-1">
+        <div class="flex gap-2 py-1">
           <button
             v-for="color in matColors"
             :key="color"
-            class="h-6 w-6 rounded-full border"
+            class="h-5 w-5 rounded-full border"
             :style="{
               background: color,
               outline:
-                e.state.mat === color ? '2px solid var(--foreground)' : 'none',
+                e.state.mat === color ? '2px solid var(--primary)' : 'none',
               outlineOffset: '2px',
             }"
             :aria-label="`Mat ${color}`"
@@ -458,11 +453,8 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
           </h3>
           <ToggleGroup
             orientation="horizontal"
-            :spacing="1"
             :model-value="e.state.print.orientation"
             type="single"
-            variant="outline"
-            size="sm"
             @update:model-value="orientation"
           >
             <ToggleGroupItem value="auto">
@@ -476,11 +468,8 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
         </div>
         <ToggleGroup
           orientation="horizontal"
-          :spacing="1"
           :model-value="e.state.layout === 'grid' ? 'fit' : e.state.print.fit"
           type="single"
-          variant="outline"
-          size="sm"
           :disabled="!e.state.panels.length || e.state.layout === 'grid'"
           aria-label="Print fit"
           @update:model-value="fit"
