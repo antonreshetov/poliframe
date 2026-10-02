@@ -169,7 +169,7 @@ function drag(event: PointerEvent, handle = '') {
           class="crop-stage"
           :style="{
             aspectRatio: imageRatio,
-            width: `min(100%, ${imageRatio * 424}px)`,
+            width: `min(100%, ${imageRatio * 412}px, calc((60vh - 28px) * ${imageRatio}))`,
           }"
         >
           <img
@@ -182,6 +182,16 @@ function drag(event: PointerEvent, handle = '') {
               transform: `translate(-50%, -50%) scale(${draft.flipX ? -1 : 1}, ${draft.flipY ? -1 : 1}) rotate(${draft.rotation}deg)`,
             }"
           >
+          <div class="crop-shade">
+            <div
+              :style="{
+                left: `${draft.crop.x * 100}%`,
+                top: `${draft.crop.y * 100}%`,
+                width: `${draft.crop.width * 100}%`,
+                height: `${draft.crop.height * 100}%`,
+              }"
+            />
+          </div>
           <div
             class="crop-selection"
             :style="{
@@ -303,6 +313,7 @@ function drag(event: PointerEvent, handle = '') {
 <style scoped>
 .crop-container {
   height: min(440px, 60vh);
+  padding: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -315,8 +326,7 @@ function drag(event: PointerEvent, handle = '') {
 }
 .crop-stage {
   position: relative;
-  max-height: min(424px, 57vh);
-  overflow: hidden;
+  max-height: min(412px, calc(60vh - 28px));
   touch-action: none;
 }
 .crop-image {
@@ -326,10 +336,19 @@ function drag(event: PointerEvent, handle = '') {
   max-width: none;
   pointer-events: none;
 }
+.crop-shade {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.crop-shade > div {
+  position: absolute;
+  box-shadow: 0 0 0 1000px #0008;
+}
 .crop-selection {
   position: absolute;
   border: 2px solid white;
-  box-shadow: 0 0 0 1000px #0008;
   cursor: move;
   touch-action: none;
 }
