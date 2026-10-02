@@ -113,20 +113,35 @@ const scale = computed(() =>
     ? fitScale.value
     : Math.max(fitScale.value, Math.min(100, zoom) / 100 / dpr.value),
 )
-function liveCellStyle(cell: Rect & { id: string, photoId: string | null }) {
-  const backing = dragBacking.value
-  const original = backing?.layout.cells.find(
-    item => item.photoId === cell.photoId && cell.photoId,
-  )
-  if (!backing || !original?.photoId)
-    return { backgroundColor: e.state.mat }
-  const factor
-    = Math.max(cell.width / original.width, cell.height / original.height)
-      * scale.value
+const compositionImageStyle = computed(() => {
+  const output = e.preview?.layout
+  if (!output)
+    return {}
+  const longest = Math.max(output.width, output.height)
   return {
-    backgroundImage: `url("${backing.dataUrl}")`,
-    backgroundSize: `${backing.layout.width * factor}px ${backing.layout.height * factor}px`,
-    backgroundPosition: `${-original.x * factor + (cell.width * scale.value - original.width * factor) / 2}px ${-original.y * factor + (cell.height * scale.value - original.height * factor) / 2}px`,
+    width: `${(output.width / longest) * 1600}px`,
+    height: `${(output.height / longest) * 1600}px`,
+    transform: `scale(${(longest * scale.value) / 1600})`,
+  }
+})
+function liveCellSource(cell: Rect & { photoId: string | null }) {
+  return dragBacking.value?.gestureImages?.find(
+    item => item.photoId === cell.photoId,
+  )
+}
+function liveCellImage(cell: Rect & { photoId: string | null }) {
+  const image = liveCellSource(cell)
+  if (!image)
+    return null
+  const factor
+    = Math.max(cell.width / image.width, cell.height / image.height)
+      * scale.value
+  const x = (cell.width * scale.value - image.width * factor) / 2
+  const y = (cell.height * scale.value - image.height * factor) / 2
+  return {
+    width: `${image.width}px`,
+    height: `${image.height}px`,
+    transform: `translate3d(${x}px, ${y}px, 0) scale(${factor})`,
   }
 }
 function clampPan() {
@@ -186,7 +201,10 @@ watchEffect(() => {
   const rendered = layout.value
     ? Math.max(layout.value.width, layout.value.height) * scale.value
     : Math.max(size.value.width, size.value.height)
-  e.previewSize = Math.round(Math.max(800, Math.min(3200, rendered * ratio)))
+  e.previewSize = Math.max(
+    800,
+    Math.min(3200, Math.ceil((rendered * ratio) / 256) * 256),
+  )
 })
 const regionPreview = ref<PreviewResult | null>(null)
 const visibleRegion = computed<Rect | null>(() => {
@@ -822,7 +840,8 @@ function key(event: KeyboardEvent) {
         :src="e.preview.dataUrl"
         alt="Composition"
         draggable="false"
-        class="h-full w-full pointer-events-none"
+        class="composition-image pointer-events-none"
+        :style="compositionImageStyle"
       >
       <img
         v-if="regionPreview?.region"
@@ -856,15 +875,24 @@ function key(event: KeyboardEvent) {
         <div
           v-for="cell in layout.cells"
           :key="cell.id"
-          class="absolute"
+          class="absolute overflow-hidden"
           :style="{
-            ...liveCellStyle(cell),
+            backgroundColor: e.state.mat,
             left: `${cell.x * scale}px`,
             top: `${cell.y * scale}px`,
             width: `${cell.width * scale}px`,
             height: `${cell.height * scale}px`,
           }"
-        />
+        >
+          <img
+            v-if="liveCellImage(cell)"
+            :src="liveCellSource(cell)!.dataUrl"
+            alt=""
+            draggable="false"
+            class="live-cell-image"
+            :style="liveCellImage(cell)!"
+          >
+        </div>
       </div>
       <div
         v-if="e.state.layout === 'grid'"
@@ -1065,6 +1093,20 @@ function key(event: KeyboardEvent) {
 </template>
 
 <style scoped>
+.composition-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.live-cell-image {
+  position: absolute;
+  max-width: none;
+  transform-origin: 0 0;
+  will-change: transform;
+}
 .preview-viewport {
   position: relative;
   overflow: hidden;

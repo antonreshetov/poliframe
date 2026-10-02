@@ -165,6 +165,22 @@ export function useEditor() {
             snapshot,
             previewSize.value,
           )
+          if (revision !== generation)
+            return
+          // Decode before publishing: replacing the live layers must not expose
+          // an undecoded image or make the first drag pay for photo decoding.
+          if (typeof window.Image === 'function') {
+            await Promise.all(
+              [
+                result.dataUrl,
+                ...(result.gestureImages ?? []).map(image => image.dataUrl),
+              ].map(async (url) => {
+                const image = new window.Image()
+                image.src = url
+                await image.decode()
+              }),
+            )
+          }
           if (revision === generation)
             preview.value = result
         }
@@ -498,7 +514,14 @@ export function useEditor() {
           : 'Export cancelled'
     }
     catch (e) {
-      fail(e)
+      const message = e instanceof Error ? e.message : String(e)
+      if (/render budget|pixel budget|dimensions.*budget/i.test(message)) {
+        error.value
+          = 'This image is too large to export. Reduce its size in Export settings and try again.'
+      }
+      else {
+        fail(e)
+      }
     }
     finally {
       busy.value = false

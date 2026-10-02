@@ -364,3 +364,35 @@ test('tagged and untagged sRGB 8/16-bit sources preserve the same visible satura
     }
   }
 })
+
+test('gesture photos preserve transformed source aspect instead of the old grid cell crop', async () => {
+  const { gestureImages } = require(join(buildRoot, 'main/imaging/composition.js'))
+  const s = state()
+  s.layout = 'grid'
+  s.grid = gridTemplate('2x2', assets.map(a => a.id))
+  s.panels[0].transform.rotation = 90
+  s.panels[0].transform.crop = { x: 0.1, y: 0.1, width: 0.8, height: 0.5 }
+  const before = await gestureImages(s, assets)
+  const effective = effectiveSize(assets[0], s.panels[0].transform)
+  assert.equal(before[0].width / before[0].height, effective.width / effective.height)
+  s.grid.children[0].weights = [0.8, 0.2]
+  const after = await gestureImages(s, assets)
+  assert.deepEqual(after, before, 'divider movement must not crop or re-encode the gesture source')
+  const image = await sharp(Buffer.from(before[0].dataUrl.split(',')[1], 'base64')).metadata()
+  assert.equal(image.width, before[0].width)
+  assert.equal(image.height, before[0].height)
+})
+
+test('preview cache invalidates when an imported file changes on disk', async () => {
+  const path = join(dir, 'mutable.png')
+  const write = color => sharp({ create: { width: 60, height: 40, channels: 3, background: color } }).png().toFile(path)
+  await write('#ff0000')
+  const photo = { ...assets[0], path, width: 60, height: 40 }
+  const s = state([photo])
+  const first = await compose(s, [photo], resources, 100)
+  const red = await first.pipeline.raw().toBuffer()
+  await write('#0000ff')
+  const second = await compose(s, [photo], resources, 100)
+  const blue = await second.pipeline.raw().toBuffer()
+  assert.notDeepEqual(blue, red)
+})
