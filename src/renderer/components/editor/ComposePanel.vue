@@ -301,6 +301,8 @@ const customCells = computed(() => {
           Layout
         </h2>
         <ToggleGroup
+          orientation="horizontal"
+          :spacing="1"
           :model-value="e.state.layout"
           type="single"
           variant="outline"
@@ -392,6 +394,8 @@ const customCells = computed(() => {
           Units
         </h2>
         <ToggleGroup
+          orientation="horizontal"
+          :spacing="1"
           :model-value="e.state.units"
           type="single"
           variant="outline"
@@ -521,6 +525,8 @@ const customCells = computed(() => {
             Orientation
           </h3>
           <ToggleGroup
+            orientation="horizontal"
+            :spacing="1"
             :model-value="e.state.print.orientation"
             type="single"
             variant="outline"
@@ -537,6 +543,8 @@ const customCells = computed(() => {
           </ToggleGroup>
         </div>
         <ToggleGroup
+          orientation="horizontal"
+          :spacing="1"
           :model-value="e.state.layout === 'grid' ? 'fit' : e.state.print.fit"
           type="single"
           variant="outline"

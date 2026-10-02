@@ -121,6 +121,8 @@ const sources = computed(() => [
         <div class="flex items-center gap-2 text-xs">
           <span>Format</span>
           <ToggleGroup
+            orientation="horizontal"
+            :spacing="1"
             type="single"
             :model-value="e.state.output.format"
             @update:model-value="
