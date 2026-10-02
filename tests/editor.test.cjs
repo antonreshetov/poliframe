@@ -203,9 +203,10 @@ test('Compose mode handlers ignore deselection and accept valid layout and units
     '@lucide/vue': {},
     '@/components/ui/button': {},
     '@/components/ui/input': {},
-    '@/components/ui/toggle-group': {},
+    '@/components/ui/segmented-control': {},
     '@/composables/useEditor': { useEditorContext: () => editor },
     '../../../shared/defaults': defaultsModule,
+    '../../../shared/layout': evaluate(source('src/shared/layout.ts')),
     './CheckField.vue': {},
     './ChoiceField.vue': {},
     './NumberField.vue': {},
@@ -219,6 +220,22 @@ test('Compose mode handlers ignore deselection and accept valid layout and units
     assert.equal(editor.state.layout, 'grid')
     assert.equal(editor.state.units, 'pixels')
   }
+  editor.state.panels = [{ photoId: 'a' }, { photoId: 'b' }]
+  const rows = [{ offsetTop: 0, offsetHeight: 48 }, { offsetTop: 52, offsetHeight: 48 }]
+  const list = { querySelectorAll: () => rows, getBoundingClientRect: () => ({ top: 100 }) }
+  controls.startPanelDrag({ currentTarget: { parentElement: list } }, 'a')
+  controls.movePanelDrag({ currentTarget: list, clientY: 154 })
+  assert.deepEqual(Array.from(controls.dragOrder.value), ['b', 'a'])
+  rows[0].offsetTop = 52
+  rows[1].offsetTop = 0
+  for (const y of [154, 151, 149, 152, 154]) {
+    controls.movePanelDrag({ currentTarget: list, clientY: y })
+    assert.deepEqual(Array.from(controls.dragOrder.value), ['b', 'a'])
+  }
+  assert.deepEqual(editor.state.panels.map(panel => panel.photoId), ['a', 'b'])
+  controls.movePanelDrag({ currentTarget: list, clientY: 140 })
+  assert.deepEqual(Array.from(controls.dragOrder.value), ['a', 'b'])
+  controls.endPanelDrag()
   controls.setLayout('vertical')
   controls.setUnits('percent')
   assert.equal(editor.state.layout, 'vertical')
@@ -472,4 +489,50 @@ test('an in-flight native render cannot replace newer local spacing geometry', a
   await complete()
   await flush()
   assert.equal(JSON.stringify(editor.interactivePreview.layout), geometry)
+})
+
+test('Escape clears cell selection and returns focus to the canvas', async (t) => {
+  const { editor, controls } = await gridFixture(t)
+  editor.selected = [controls.layout.value.cells[0].id]
+  let focused = false
+  controls.viewport.value = {
+    focus: () => {
+      focused = true
+    },
+  }
+  controls.key({ key: 'Escape', preventDefault() {} })
+  assert.equal(editor.selected.length, 0)
+  assert.equal(focused, true)
+  controls.viewport.value = null
+})
+
+test('background press clears selection without intercepting cell controls', async (t) => {
+  const { editor, controls } = await gridFixture(t)
+  const id = controls.layout.value.cells[0].id
+  let focused = 0
+  controls.viewport.value = { focus: () => focused++ }
+  const background = { closest: () => null }
+  editor.selected = [id]
+  controls.panStart({ button: 0, target: background, currentTarget: background })
+  assert.equal(editor.selected.length, 0)
+  assert.equal(focused, 1)
+  editor.selected = [id]
+  controls.panStart({ button: 0, target: { closest: () => ({}) }, currentTarget: background })
+  assert.equal(editor.selected[0], id)
+  assert.equal(focused, 1)
+  controls.viewport.value = null
+})
+
+test('drop highlight survives child transitions and clears on leave or drag end', async (t) => {
+  const { controls } = await gridFixture(t)
+  controls.dropTarget.value = 'target'
+  controls.leaveCell({ currentTarget: { contains: () => true }, relatedTarget: {} })
+  assert.equal(controls.dropTarget.value, 'target')
+  controls.leaveCell({ currentTarget: { contains: () => false }, relatedTarget: null })
+  assert.equal(controls.dropTarget.value, '')
+  controls.dragging.value = 'source'
+  controls.dropTarget.value = 'target'
+  controls.endCellDrag()
+  assert.equal(controls.dragging.value, '')
+  assert.equal(controls.dropTarget.value, '')
 })

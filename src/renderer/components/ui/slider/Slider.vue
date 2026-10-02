@@ -19,7 +19,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     data-slot="slider"
     :data-vertical="props.orientation === 'vertical' ? '' : undefined"
     :class="cn(
-      'data-vertical:min-h-40 relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col',
+      'min-h-5 data-vertical:min-h-40 relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col',
       props.class,
     )"
     v-bind="forwarded"
@@ -43,7 +43,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       :key="key"
       data-slot="slider-thumb"
       :data-vertical="props.orientation === 'vertical' ? '' : undefined"
-      class="border-ring ring-ring/50 relative size-3 rounded-full border bg-white transition-[color,box-shadow] after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50"
+      class="border-ring ring-ring/50 relative size-4 rounded-full border-0 bg-[#dedede] transition-[color,box-shadow] after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50"
     />
   </SliderRoot>
 </template>

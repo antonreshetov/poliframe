@@ -39,7 +39,7 @@ async function apply() {
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
       >
         <Bookmark />{{
@@ -63,8 +63,12 @@ async function apply() {
         <Check v-if="e.activePreset === 'defaults'" />Defaults
       </DropdownMenuItem>
       <DropdownMenuItem @select="e.applyPreset('builtin')">
-        <Check v-if="e.activePreset === 'builtin'" />Passe-partout +
-        Caption<LockKeyhole />
+        <Check v-if="e.activePreset === 'builtin'" /><span
+          class="min-w-0 truncate"
+        >Passe-partout + Caption</span><LockKeyhole
+          class="ml-auto size-3 shrink-0 text-muted-foreground"
+          :stroke-width="1.75"
+        />
       </DropdownMenuItem>
       <DropdownMenuSeparator v-if="e.presets.length" />
       <DropdownMenuItem
@@ -72,7 +76,10 @@ async function apply() {
         :key="preset.id"
         @select="e.applyPreset(preset.id)"
       >
-        <Check v-if="e.activePreset === preset.id" />{{ preset.name }}
+        <Check v-if="e.activePreset === preset.id" /><span
+          class="min-w-0 truncate"
+          :title="preset.name"
+        >{{ preset.name }}</span>
       </DropdownMenuItem>
       <template v-if="active">
         <DropdownMenuSeparator />

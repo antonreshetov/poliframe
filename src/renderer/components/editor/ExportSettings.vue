@@ -19,7 +19,10 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  SegmentedControl as ToggleGroup,
+  SegmentedControlItem as ToggleGroupItem,
+} from '@/components/ui/segmented-control'
 import { useEditorContext } from '@/composables/useEditor'
 import ChoiceField from './ChoiceField.vue'
 import NumberField from './NumberField.vue'
@@ -56,7 +59,7 @@ const sources = computed(() => [
   <Popover>
     <PopoverTrigger as-child>
       <Button
-        variant="outline"
+        variant="secondary"
         size="icon"
         aria-label="Export settings"
         title="Export settings"
@@ -122,7 +125,6 @@ const sources = computed(() => [
           <span>Format</span>
           <ToggleGroup
             orientation="horizontal"
-            :spacing="1"
             type="single"
             :model-value="e.state.output.format"
             @update:model-value="

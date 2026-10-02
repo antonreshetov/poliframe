@@ -1,18 +1,6 @@
 <script setup lang="ts">
 import type { GridNode, PreviewResult, Rect } from '../../../shared/contracts'
-import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  Crop,
-  Image,
-  ImagePlus,
-  Merge,
-  Plus,
-  Trash2,
-  X,
-} from '@lucide/vue'
+import { Crop, Image, ImagePlus, Merge, Plus, Trash2, X } from '@lucide/vue'
 import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { Button } from '@/components/ui/button'
 import { leaves, useEditorContext } from '@/composables/useEditor'
@@ -29,6 +17,19 @@ const viewport = ref<HTMLElement>()
 const size = ref({ width: 600, height: 600 })
 const pan = ref({ x: 0, y: 0 })
 const dragging = ref('')
+const dropTarget = ref('')
+let dragGhost: HTMLCanvasElement | undefined
+function endCellDrag() {
+  dragging.value = ''
+  dropTarget.value = ''
+  dragGhost?.remove()
+  dragGhost = undefined
+}
+function leaveCell(event: DragEvent) {
+  const cell = event.currentTarget as HTMLElement
+  if (!event.relatedTarget || !cell.contains(event.relatedTarget as Node))
+    dropTarget.value = ''
+}
 const dpr = ref(window.devicePixelRatio || 1)
 function updateDpr() {
   dpr.value = window.devicePixelRatio || 1
@@ -51,6 +52,7 @@ onMounted(() => {
     observer.observe(viewport.value)
 })
 onUnmounted(() => {
+  endCellDrag()
   observer?.disconnect()
   window.removeEventListener('resize', updateDpr)
   clearTimeout(regionTimer)
@@ -744,7 +746,68 @@ function select(id: string, event: MouseEvent) {
       : [...e.selected, id]
     : [id]
 }
+function clearSelection() {
+  e.selected = []
+  viewport.value?.focus({ preventScroll: true })
+}
+function startCellDrag(event: DragEvent, id: string) {
+  endCellDrag()
+  dragging.value = id
+  e.selected = [id]
+  const cell = layout.value?.cells.find(cell => cell.id === id)
+  if (!cell || !event.dataTransfer)
+    return
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', id)
+  const ratio = Math.min(scale.value, 120 / Math.max(cell.width, cell.height))
+  const width = cell.width * ratio
+  const height = cell.height * ratio
+  const canvas = document.createElement('canvas')
+  const pixelRatio = window.devicePixelRatio || 1
+  canvas.width = Math.ceil(width * pixelRatio)
+  canvas.height = Math.ceil(height * pixelRatio)
+  canvas.style.cssText = `position:fixed;left:-1000px;top:0;width:${width}px;height:${height}px;pointer-events:none`
+  const context = canvas.getContext('2d')
+  if (!context)
+    return
+  context.scale(pixelRatio, pixelRatio)
+  context.globalAlpha = 0.85
+  context.beginPath()
+  context.roundRect(0, 0, width, height, 5)
+  context.clip()
+  context.fillStyle = e.state.mat
+  context.fillRect(0, 0, width, height)
+  const image
+    = viewport.value?.querySelector<HTMLImageElement>('.composition-image')
+  const composition = e.preview?.layout
+  if (image?.complete && image.naturalWidth && composition) {
+    const sx = image.naturalWidth / composition.width
+    const sy = image.naturalHeight / composition.height
+    context.drawImage(
+      image,
+      cell.x * sx,
+      cell.y * sy,
+      cell.width * sx,
+      cell.height * sy,
+      0,
+      0,
+      width,
+      height,
+    )
+  }
+  context.strokeStyle = 'rgba(255,255,255,0.6)'
+  context.lineWidth = 1
+  context.beginPath()
+  context.roundRect(0.5, 0.5, width - 1, height - 1, 5)
+  context.stroke()
+  document.body.append(canvas)
+  dragGhost = canvas
+  event.dataTransfer.setDragImage(canvas, width / 2, height / 2)
+}
+
 function panStart(event: PointerEvent) {
+  if (event.button === 0 && event.target === event.currentTarget)
+    clearSelection()
   if (
     (event.target as HTMLElement).closest('button')
     || scale.value <= fitScale.value
@@ -773,7 +836,8 @@ function key(event: KeyboardEvent) {
   const cells = layout.value?.cells ?? []
   const index = cells.findIndex(c => c.id === e.selected[0])
   if (event.key === 'Escape') {
-    e.selected = []
+    event.preventDefault()
+    clearSelection()
   }
   else if (event.key === 'Delete' || event.key === 'Backspace') {
     event.preventDefault()
@@ -834,12 +898,16 @@ function key(event: KeyboardEvent) {
     @keydown="key"
     @pointerdown="panStart"
     @wheel.prevent="wheel"
-    @dragover.prevent
-    @drop.prevent="!dragging && e.drop($event)"
+    @dragover.prevent="dropTarget = ''"
+    @drop.prevent="
+      !dragging && e.drop($event);
+      endCellDrag();
+    "
   >
     <div
       v-if="e.state.panels.length || e.state.layout === 'grid'"
       class="preview-image"
+      :class="{ 'is-interacting': resizing || dragging || e.spacingEditing }"
       :style="{
         width: `${(layout?.width ?? 1) * scale}px`,
         height: `${(layout?.height ?? 1) * scale}px`,
@@ -944,8 +1012,9 @@ function key(event: KeyboardEvent) {
           :key="cell.id"
           class="cell-overlay"
           :class="{
-            selected: e.selected.includes(cell.id),
-            empty: !cell.photoId,
+            'selected': e.selected.includes(cell.id),
+            'empty': !cell.photoId,
+            'drop-target': dropTarget === cell.id,
           }"
           :style="{
             left: `${cell.x * scale}px`,
@@ -965,14 +1034,17 @@ function key(event: KeyboardEvent) {
               ? (e.cropId = cell.photoId)
               : e.add(undefined, undefined, cell.id)
           "
-          @dragstart="dragging = cell.id"
-          @dragend="dragging = ''"
-          @dragover.prevent
+          @dragstart="startCellDrag($event, cell.id)"
+          @dragend="endCellDrag"
+          @dragover.stop.prevent="
+            dropTarget = dragging === cell.id ? '' : cell.id
+          "
+          @dragleave="leaveCell"
           @drop.stop.prevent="
             dragging
               ? e.swap(dragging, cell.id)
               : e.drop($event, undefined, cell.id);
-            dragging = '';
+            endCellDrag();
           "
         >
           <Image
@@ -1052,9 +1124,7 @@ function key(event: KeyboardEvent) {
       :style="toolbarPosition"
     >
       <Button
-        v-for="(icon, index) in e.selected.length === 1
-          ? [ArrowLeft, ArrowRight, ArrowUp, ArrowDown]
-          : []"
+        v-for="(_, index) in e.selected.length === 1 ? 4 : 0"
         :key="index"
         variant="ghost"
         size="icon-sm"
@@ -1064,7 +1134,30 @@ function key(event: KeyboardEvent) {
         :title="['Split left', 'Split right', 'Split up', 'Split down'][index]"
         @click="e.split(index < 2 ? 'horizontal' : 'vertical', index % 2 === 0)"
       >
-        <component :is="icon" />
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+        >
+          <rect
+            x="2"
+            y="4"
+            width="20"
+            height="16"
+            rx="2"
+            stroke="currentColor"
+            stroke-width="1.75"
+          />
+          <rect
+            :x="index === 1 ? 12.5 : 4.5"
+            :y="index === 3 ? 12.5 : 6.5"
+            :width="index < 2 ? 7 : 15"
+            :height="index < 2 ? 11 : 5"
+            rx=".7"
+            fill="currentColor"
+          />
+        </svg>
       </Button><Button
         v-if="e.selected.length === 1 && selectedCell?.photoId"
         variant="ghost"
@@ -1134,6 +1227,7 @@ function key(event: KeyboardEvent) {
   will-change: transform;
 }
 .preview-viewport {
+  outline: none;
   position: relative;
   overflow: hidden;
   display: flex;
@@ -1165,8 +1259,10 @@ function key(event: KeyboardEvent) {
 .cell-overlay.empty {
   background: #8888881a;
 }
-.cell-overlay:hover {
-  border-color: #8888;
+.cell-overlay.drop-target {
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+  border-color: var(--primary);
+  border-radius: 2px;
 }
 .cell-overlay.selected {
   border-color: var(--primary);
@@ -1215,9 +1311,13 @@ function key(event: KeyboardEvent) {
   z-index: 2;
   opacity: 0;
 }
-.add-track:hover,
+.preview-viewport:hover .preview-image:not(.is-interacting) .add-track,
 .add-track:focus-visible {
   opacity: 1;
+}
+.add-track:hover {
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 .add-track.left {
   left: -27px;
@@ -1235,7 +1335,19 @@ function key(event: KeyboardEvent) {
   bottom: -27px;
   left: calc(50% - 11px);
 }
+@keyframes grid-tools-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 .grid-tools {
+  animation: grid-tools-appear 120ms ease-out;
+  transition:
+    left 150ms ease-in-out,
+    top 150ms ease-in-out;
   position: absolute;
   top: 16px;
   left: 50%;
@@ -1243,5 +1355,11 @@ function key(event: KeyboardEvent) {
   display: flex;
   gap: 2px;
   white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .grid-tools {
+    animation: none;
+    transition: none;
+  }
 }
 </style>

@@ -28,6 +28,7 @@ import { identityTransform } from '../../../shared/defaults'
 const e = useEditorContext()
 const draft = ref(identityTransform())
 const stage = ref<HTMLElement>()
+const cropDragging = ref(false)
 const photo = computed(() => (e.cropId ? e.photos[e.cropId] : null))
 const rotated = computed(() => Math.abs(draft.value.rotation % 180) === 90)
 const imageRatio = computed(() =>
@@ -70,6 +71,7 @@ function aspect() {
 watch(
   () => e.cropId,
   () => {
+    cropDragging.value = false
     const panel = e.state.panels.find(p => p.photoId === e.cropId)
     if (panel) {
       draft.value = JSON.parse(JSON.stringify(panel.transform))
@@ -94,6 +96,7 @@ function drag(event: PointerEvent, handle = '') {
   const x = event.clientX
   const y = event.clientY
   const move = (ev: PointerEvent) => {
+    cropDragging.value = true
     const dx = (ev.clientX - x) / bounds.width
     const dy = (ev.clientY - y) / bounds.height
     if (!handle) {
@@ -133,13 +136,16 @@ function drag(event: PointerEvent, handle = '') {
     }
   }
   const end = () => {
+    cropDragging.value = false
     target.removeEventListener('pointermove', move)
     target.removeEventListener('pointerup', end)
     target.removeEventListener('pointercancel', end)
+    target.removeEventListener('lostpointercapture', end)
   }
   target.addEventListener('pointermove', move)
   target.addEventListener('pointerup', end)
   target.addEventListener('pointercancel', end)
+  target.addEventListener('lostpointercapture', end)
 }
 </script>
 
@@ -169,7 +175,7 @@ function drag(event: PointerEvent, handle = '') {
           class="crop-stage"
           :style="{
             aspectRatio: imageRatio,
-            width: `min(100%, ${imageRatio * 424}px)`,
+            width: `min(100%, ${imageRatio * 412}px, calc((60vh - 28px) * ${imageRatio}))`,
           }"
         >
           <img
@@ -182,6 +188,16 @@ function drag(event: PointerEvent, handle = '') {
               transform: `translate(-50%, -50%) scale(${draft.flipX ? -1 : 1}, ${draft.flipY ? -1 : 1}) rotate(${draft.rotation}deg)`,
             }"
           >
+          <div class="crop-shade">
+            <div
+              :style="{
+                left: `${draft.crop.x * 100}%`,
+                top: `${draft.crop.y * 100}%`,
+                width: `${draft.crop.width * 100}%`,
+                height: `${draft.crop.height * 100}%`,
+              }"
+            />
+          </div>
           <div
             class="crop-selection"
             :style="{
@@ -192,6 +208,15 @@ function drag(event: PointerEvent, handle = '') {
             }"
             @pointerdown="drag($event)"
           >
+            <svg
+              v-if="cropDragging"
+              class="crop-thirds"
+              viewBox="0 0 3 3"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <path d="M1 0V3 M2 0V3 M0 1H3 M0 2H3" />
+            </svg>
             <span
               v-for="handle in ['nw', 'ne', 'sw', 'se']"
               :key="handle"
@@ -303,6 +328,7 @@ function drag(event: PointerEvent, handle = '') {
 <style scoped>
 .crop-container {
   height: min(440px, 60vh);
+  padding: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -315,8 +341,7 @@ function drag(event: PointerEvent, handle = '') {
 }
 .crop-stage {
   position: relative;
-  max-height: min(424px, 57vh);
-  overflow: hidden;
+  max-height: min(412px, calc(60vh - 28px));
   touch-action: none;
 }
 .crop-image {
@@ -326,12 +351,34 @@ function drag(event: PointerEvent, handle = '') {
   max-width: none;
   pointer-events: none;
 }
+.crop-shade {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.crop-shade > div {
+  position: absolute;
+  box-shadow: 0 0 0 1000px #0008;
+}
 .crop-selection {
   position: absolute;
   border: 2px solid white;
-  box-shadow: 0 0 0 1000px #0008;
   cursor: move;
   touch-action: none;
+}
+.crop-thirds {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.crop-thirds path {
+  fill: none;
+  stroke: rgb(255 255 255 / 80%);
+  stroke-width: 0.5px;
+  vector-effect: non-scaling-stroke;
 }
 .crop-handle {
   position: absolute;

@@ -1,70 +1,113 @@
 <script setup lang="ts">
 import type { GridNode } from '../../../shared/contracts'
-import { CircleCheck, Crop, Plus, TriangleAlert, X } from '@lucide/vue'
+import {
+  CircleCheck,
+  CircleX,
+  Crop,
+  ImagePlus,
+  TriangleAlert,
+} from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  SegmentedControl as ToggleGroup,
+  SegmentedControlItem as ToggleGroupItem,
+} from '@/components/ui/segmented-control'
 import { useEditorContext } from '@/composables/useEditor'
-import { matColors } from '../../../shared/defaults'
+import { gridTemplate, matColors } from '../../../shared/defaults'
+import { gridCells } from '../../../shared/layout'
 import CheckField from './CheckField.vue'
 import ChoiceField from './ChoiceField.vue'
 import NumberField from './NumberField.vue'
 
 const e = useEditorContext()
 const dragging = ref('')
+const dragOrder = ref<string[] | null>(null)
+let dragSlots: { top: number, bottom: number }[] = []
+const displayedPanels = computed(() =>
+  dragOrder.value
+    ? dragOrder.value
+        .map(id => e.state.panels.find(panel => panel.photoId === id)!)
+        .filter(Boolean)
+    : e.state.panels,
+)
+function startPanelDrag(event: DragEvent, id: string) {
+  const list = (event.currentTarget as HTMLElement).parentElement!
+  dragSlots = Array.from(list.querySelectorAll<HTMLElement>('.photo-row')).map(
+    row => ({
+      top: row.offsetTop,
+      bottom: row.offsetTop + row.offsetHeight,
+    }),
+  )
+  dragging.value = id
+  dragOrder.value = e.state.panels.map(panel => panel.photoId)
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', id)
+  }
+}
+function movePanelDrag(event: DragEvent) {
+  if (!dragOrder.value || !dragging.value)
+    return
+  const list = event.currentTarget as HTMLElement
+  const y = event.clientY - list.getBoundingClientRect().top
+  const from = dragOrder.value.indexOf(dragging.value)
+  const current = dragSlots[from]
+  if (!current)
+    return
+  // Keep a small dead zone around the current slot so boundary jitter cannot reverse a move.
+  if (y >= current.top - 4 && y <= current.bottom + 4)
+    return
+  const target = dragSlots.findIndex(
+    slot => y >= slot.top && y <= slot.bottom,
+  )
+  if (target < 0 || from === target)
+    return
+  const next = [...dragOrder.value]
+  next.splice(target, 0, next.splice(from, 1)[0]!)
+  dragOrder.value = next
+}
+function endPanelDrag() {
+  dragging.value = ''
+  dragOrder.value = null
+  dragSlots = []
+}
+function dropPanel(event: DragEvent, id: string) {
+  if (dragging.value && dragOrder.value) {
+    const index = dragOrder.value.indexOf(dragging.value)
+    const target = e.state.panels[index]?.photoId
+    if (target)
+      e.reorder(dragging.value, target)
+  }
+  else {
+    e.drop(event, id)
+  }
+  endPanelDrag()
+}
 const measure = computed(() => e.state[e.state.units])
 const suffix = computed(() => (e.state.units === 'percent' ? '%' : 'px'))
-const templates = [
-  {
-    name: '2x2',
-    cells: [
-      [2, 2, 9, 9],
-      [13, 2, 9, 9],
-      [2, 13, 9, 9],
-      [13, 13, 9, 9],
-    ],
-  },
-  {
-    name: '3x3',
-    cells: Array.from({ length: 9 }, (_, i) => [
-      2 + (i % 3) * 7,
-      2 + Math.floor(i / 3) * 7,
-      6,
-      6,
-    ]),
-  },
-  {
-    name: '1x2',
-    cells: [
-      [2, 2, 9, 20],
-      [13, 2, 9, 20],
-    ],
-  },
-  {
-    name: '2x1',
-    cells: [
-      [2, 2, 20, 9],
-      [2, 13, 20, 9],
-    ],
-  },
-  {
-    name: '1+2',
-    cells: [
-      [2, 2, 9, 20],
-      [13, 2, 9, 9],
-      [13, 13, 9, 9],
-    ],
-  },
-  {
-    name: '1over2',
-    cells: [
-      [2, 2, 20, 9],
-      [2, 13, 9, 9],
-      [13, 13, 9, 9],
-    ],
-  },
-]
+const thumbnailSize = computed(() => {
+  const [w, h] = e.state.gridAspect.split(':').map(Number)
+  const aspect = Math.max(0.6, Math.min(1.7, w! / h!))
+  return aspect >= 1
+    ? { width: 28, height: 28 / aspect }
+    : { width: 28 * aspect, height: 28 }
+})
+function thumbnailCells(node: GridNode) {
+  const { width, height } = thumbnailSize.value
+  return gridCells(
+    node,
+    { x: (34 - width) / 2, y: (34 - height) / 2, width, height },
+    Math.max(1.2, Math.min(width, height) * 0.05),
+  )
+}
+const templates = computed(() =>
+  ['2x2', '3x3', '1x2', '2x1', '1+2', '1over2'].map(name => ({
+    name,
+    cells: thumbnailCells(gridTemplate(name)),
+  })),
+)
 function setLayout(value: unknown) {
   if (value === 'horizontal' || value === 'vertical' || value === 'grid')
     e.state.layout = value
@@ -175,32 +218,7 @@ const activeTemplate = computed(
       'V(LH(LL))': '1over2',
     })[gridSignature(e.state.grid)],
 )
-const customCells = computed(() => {
-  const cells: number[][] = []
-  function walk(
-    node: GridNode,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-  ) {
-    if (node.type === 'leaf') {
-      cells.push([x, y, width, height])
-      return
-    }
-    const sum = node.weights.reduce((a, b) => a + b, 0)
-    let offset = 0
-    node.children.forEach((child, i) => {
-      const fraction = node.weights[i]! / sum
-      node.axis === 'horizontal'
-        ? walk(child, x + width * offset, y, width * fraction, height)
-        : walk(child, x, y + height * offset, width, height * fraction)
-      offset += fraction
-    })
-  }
-  walk(e.state.grid, 2, 2, 20, 20)
-  return cells
-})
+const customCells = computed(() => thumbnailCells(e.state.grid))
 </script>
 
 <template>
@@ -211,102 +229,101 @@ const customCells = computed(() => {
           Images
         </h2>
         <span
+          class="self-center text-[11px]"
           :class="
             e.state.panels.length > e.capacity
               ? 'text-orange-500'
               : 'text-muted-foreground'
           "
-        >{{ e.state.panels.length }} / {{ e.capacity }}</span>
+        >{{ e.state.panels.length }}/{{ e.capacity }}</span>
       </div>
-      <div
-        v-for="(panel, i) in e.state.panels"
-        :key="panel.photoId"
-        class="flex items-center gap-2 rounded-md bg-muted p-1"
-        draggable="true"
-        @dragstart="dragging = panel.photoId"
-        @dragover.prevent
-        @drop.prevent="
-          dragging
-            ? e.reorder(dragging, panel.photoId)
-            : e.drop($event, panel.photoId);
-          dragging = '';
-        "
-        @dragend="dragging = ''"
+      <TransitionGroup
+        name="photo-reorder"
+        tag="div"
+        class="relative space-y-1"
+        @dragover.prevent="movePanelDrag"
       >
-        <button
-          class="relative shrink-0"
-          :aria-label="`Replace image ${i + 1}`"
-          title="Replace image"
-          @click="e.add(undefined, panel.photoId)"
+        <div
+          v-for="(panel, i) in displayedPanels"
+          :key="panel.photoId"
+          class="photo-row flex items-center gap-2 rounded-md bg-card p-1"
+          :class="{ 'is-dragging': dragging === panel.photoId }"
+          draggable="true"
+          @dragstart="startPanelDrag($event, panel.photoId)"
+          @dragover.prevent
+          @drop.stop.prevent="dropPanel($event, panel.photoId)"
+          @dragend="endPanelDrag"
         >
-          <img
-            :src="e.photos[panel.photoId]?.thumbnail"
-            class="h-10 w-10 rounded object-cover"
-            alt=""
-          ><span
-            v-if="
-              panel.transform.rotation
-                || panel.transform.flipX
-                || panel.transform.flipY
-                || panel.transform.crop.width < 1
-                || panel.transform.crop.height < 1
-            "
-            class="absolute bottom-0 right-0 rounded-full bg-primary p-0.5 text-primary-foreground"
-          ><Crop :size="10" /></span>
-        </button>
-        <div class="min-w-0 flex-1">
-          <p class="text-xs text-muted-foreground">
-            {{ i + 1 }}
-          </p>
-          <p class="truncate text-xs">
-            {{ e.photos[panel.photoId]?.name }}
-          </p>
+          <button
+            class="relative shrink-0"
+            :aria-label="`Replace image ${i + 1}`"
+            title="Replace image"
+            @click="e.add(undefined, panel.photoId)"
+          >
+            <img
+              :src="e.photos[panel.photoId]?.thumbnail"
+              class="h-10 w-10 rounded object-cover"
+              alt=""
+              draggable="false"
+            ><span
+              v-if="
+                panel.transform.rotation
+                  || panel.transform.flipX
+                  || panel.transform.flipY
+                  || panel.transform.crop.width < 1
+                  || panel.transform.crop.height < 1
+              "
+              class="absolute bottom-0 right-0 rounded-full bg-primary p-0.5 text-primary-foreground"
+            ><Crop :size="10" /></span>
+          </button>
+          <div class="min-w-0 flex-1">
+            <p class="text-xs text-muted-foreground">
+              {{ i + 1 }}
+            </p>
+            <p class="truncate text-xs">
+              {{ e.photos[panel.photoId]?.name }}
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            :aria-label="`Crop image ${i + 1}`"
+            title="Crop & rotate"
+            @click="e.cropId = panel.photoId"
+          >
+            <Crop />
+          </Button><Button
+            variant="ghost"
+            size="icon-xs"
+            :aria-label="`Remove image ${i + 1}`"
+            @click="e.remove(panel.photoId)"
+          >
+            <CircleX class="remove-photo-icon" />
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          :aria-label="`Crop image ${i + 1}`"
-          title="Crop & rotate"
-          @click="e.cropId = panel.photoId"
-        >
-          <Crop />
-        </Button><Button
-          variant="ghost"
-          size="icon-xs"
-          :aria-label="`Remove image ${i + 1}`"
-          @click="e.remove(panel.photoId)"
-        >
-          <X />
-        </Button>
-      </div>
-      <div
+      </TransitionGroup>
+      <Button
         v-if="e.state.panels.length < e.capacity"
-        class="flex h-14 items-center justify-center rounded-lg border border-dashed"
+        variant="ghost"
+        class="add-image-zone"
+        :disabled="e.importing"
+        @click="e.add()"
         @dragover.prevent
         @drop.prevent="e.drop($event)"
       >
-        <Button
-          variant="ghost"
-          size="sm"
-          :disabled="e.importing"
-          @click="e.add()"
-        >
-          <Plus />{{ e.importing ? "Importing…" : "Add image" }}
-        </Button>
-      </div>
+        <ImagePlus />{{ e.importing ? "Importing…" : "Add image" }}
+      </Button>
     </section>
     <section class="space-y-3 border-t pt-3">
       <div class="flex items-center justify-between gap-2">
-        <h2 class="text-xs">
+        <h2 class="text-[13px]">
           Layout
         </h2>
         <ToggleGroup
           orientation="horizontal"
-          :spacing="1"
+          class="layout-segments"
           :model-value="e.state.layout"
           type="single"
-          variant="outline"
-          size="sm"
           @update:model-value="setLayout"
         >
           <ToggleGroupItem value="horizontal">
@@ -325,58 +342,43 @@ const customCells = computed(() => {
           <h3 class="text-xs">
             Template
           </h3>
-          <div class="flex gap-1">
+          <div class="grid w-full min-w-0 grid-cols-7 gap-1">
             <Button
-              v-for="template in templates"
+              v-for="template in [
+                ...templates,
+                ...(!activeTemplate
+                  ? [{ name: 'Custom', cells: customCells }]
+                  : []),
+              ]"
               :key="template.name"
-              :variant="
-                activeTemplate === template.name ? 'default' : 'outline'
+              variant="ghost"
+              size="icon"
+              class="grid-template-thumb"
+              :aria-pressed="
+                activeTemplate === template.name || template.name === 'Custom'
               "
-              size="icon"
-              :aria-label="`Grid template ${template.name}`"
+              :aria-label="
+                template.name === 'Custom'
+                  ? 'Custom grid'
+                  : `Grid template ${template.name}`
+              "
               :title="template.name === '1over2' ? '1 over 2' : template.name"
-              @click="e.template(template.name)"
+              @click="template.name !== 'Custom' && e.template(template.name)"
             >
               <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.2"
+                class="size-[34px]"
+                viewBox="0 0 34 34"
+                fill="currentColor"
                 aria-hidden="true"
               >
                 <rect
-                  v-for="(cell, index) in template.cells"
-                  :key="index"
-                  :x="cell[0]"
-                  :y="cell[1]"
-                  :width="cell[2]"
-                  :height="cell[3]"
-                  rx="1"
-                />
-              </svg>
-            </Button>
-            <Button
-              v-if="!activeTemplate"
-              variant="default"
-              size="icon"
-              aria-label="Custom grid"
-              title="Custom"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1"
-                aria-hidden="true"
-              >
-                <rect
-                  v-for="(cell, index) in customCells"
-                  :key="index"
-                  :x="cell[0]! + 0.5"
-                  :y="cell[1]! + 0.5"
-                  :width="Math.max(0, cell[2]! - 1)"
-                  :height="Math.max(0, cell[3]! - 1)"
-                  rx=".5"
+                  v-for="cell in template.cells"
+                  :key="cell.id"
+                  :x="cell.x"
+                  :y="cell.y"
+                  :width="cell.width"
+                  :height="cell.height"
+                  rx="1.5"
                 />
               </svg>
             </Button>
@@ -390,16 +392,13 @@ const customCells = computed(() => {
         />
       </template>
       <div class="flex items-center gap-2">
-        <h2 class="text-xs">
+        <h2 class="text-[13px]">
           Units
         </h2>
         <ToggleGroup
           orientation="horizontal"
-          :spacing="1"
           :model-value="e.state.units"
           type="single"
-          variant="outline"
-          size="sm"
           @update:model-value="setUnits"
         >
           <ToggleGroupItem value="percent">
@@ -454,15 +453,15 @@ const customCells = computed(() => {
         <h2 class="text-xs">
           Mat color
         </h2>
-        <div class="flex gap-1.5 py-1">
+        <div class="flex gap-2 py-1">
           <button
             v-for="color in matColors"
             :key="color"
-            class="h-6 w-6 rounded-full border"
+            class="h-5 w-5 rounded-full border"
             :style="{
               background: color,
               outline:
-                e.state.mat === color ? '2px solid var(--foreground)' : 'none',
+                e.state.mat === color ? '2px solid var(--primary)' : 'none',
               outlineOffset: '2px',
             }"
             :aria-label="`Mat ${color}`"
@@ -520,17 +519,14 @@ const customCells = computed(() => {
             :options="['cm', 'mm', 'in']"
           />
         </div>
-        <div class="space-y-1">
+        <div class="relative space-y-1">
           <h3 class="text-xs">
             Orientation
           </h3>
           <ToggleGroup
             orientation="horizontal"
-            :spacing="1"
             :model-value="e.state.print.orientation"
             type="single"
-            variant="outline"
-            size="sm"
             @update:model-value="orientation"
           >
             <ToggleGroupItem value="auto">
@@ -544,11 +540,8 @@ const customCells = computed(() => {
         </div>
         <ToggleGroup
           orientation="horizontal"
-          :spacing="1"
           :model-value="e.state.layout === 'grid' ? 'fit' : e.state.print.fit"
           type="single"
-          variant="outline"
-          size="sm"
           :disabled="!e.state.panels.length || e.state.layout === 'grid'"
           aria-label="Print fit"
           @update:model-value="fit"
@@ -590,3 +583,12 @@ const customCells = computed(() => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.photo-row.is-dragging {
+  opacity: 0.18;
+}
+.photo-reorder-move {
+  transition: transform 140ms ease-in-out;
+}
+</style>
