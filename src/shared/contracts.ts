@@ -123,6 +123,7 @@ export interface LayoutResult {
   warnings: string[]
 }
 export interface PreviewResult {
+  annotationLayers?: (Rect & { dataUrl: string, opacity?: number })[]
   gestureImages?: {
     photoId: string
     dataUrl: string
@@ -151,6 +152,7 @@ export interface AppApi {
     snapshot: Composition,
     maxSize: number,
     region?: Rect,
+    annotationsOnly?: boolean,
   ) => Promise<PreviewResult>
   exportImage: (
     snapshot: Composition,

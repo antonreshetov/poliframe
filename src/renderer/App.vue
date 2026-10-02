@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Download, X, ZoomIn, ZoomOut } from '@lucide/vue'
-import { provide, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import AnnotatePanel from '@/components/editor/AnnotatePanel.vue'
 import ComposePanel from '@/components/editor/ComposePanel.vue'
 import CropEditor from '@/components/editor/CropEditor.vue'
@@ -14,6 +14,9 @@ import { editorKey, useEditor } from '@/composables/useEditor'
 const api = window.poliframe
 const e = useEditor()
 provide(editorKey, e)
+const outputLayout = computed(
+  () => e.interactivePreview?.layout ?? e.preview?.layout,
+)
 const zoom = ref<number | null>(null)
 const effectiveZoom = ref(100)
 const fitZoom = ref(100)
@@ -129,10 +132,10 @@ watch(
         <div class="flex-1" />
         <PresetsMenu />
         <span
-          v-if="e.preview && e.state.panels.length"
+          v-if="outputLayout"
           class="text-xs text-muted-foreground tabular-nums whitespace-nowrap"
         >
-          {{ e.preview.layout.width }} × {{ e.preview.layout.height }} px
+          {{ outputLayout.width }} × {{ outputLayout.height }} px
         </span>
         <ExportSettings /><Button
           v-if="e.busy"

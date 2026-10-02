@@ -51,12 +51,12 @@ const model = defineModel<number>({ required: true })
         @update:model-value="model = $event?.[0] ?? 0"
       />
       <div
-        v-if="max === 15 && suffix === '%'"
+        v-if="(max === 15 || max === 20) && suffix === '%'"
         class="pointer-events-none absolute inset-x-2 bottom-0 flex justify-between"
         aria-hidden="true"
       >
         <span
-          v-for="tick in 16"
+          v-for="tick in (max ?? 15) + 1"
           :key="tick"
           class="size-[2px] rounded-full bg-muted-foreground/50"
         />

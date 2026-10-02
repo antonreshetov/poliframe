@@ -3,7 +3,7 @@ import type { Asset } from '../services/assets'
 import path from 'node:path'
 import process from 'node:process'
 import { parentPort } from 'node:worker_threads'
-import { compose, gestureImages } from './composition'
+import { annotationPreview, compose, gestureImages } from './composition'
 import { exportImage } from './index'
 
 parentPort!.on(
@@ -16,9 +16,20 @@ parentPort!.on(
     resources: string
     region?: Rect
     maxSize?: number
+    annotationsOnly?: boolean
     destination?: string
   }) => {
     try {
+      if (job.type === 'preview' && job.annotationsOnly) {
+        const result = await annotationPreview(
+          job.snapshot,
+          job.assets,
+          job.resources,
+          job.maxSize ?? 2200,
+        )
+        parentPort!.postMessage({ id: job.id, result })
+        return
+      }
       const { pipeline, layout } = await compose(
         job.snapshot,
         job.assets,

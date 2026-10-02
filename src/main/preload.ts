@@ -5,8 +5,14 @@ const api: AppApi = {
   importImages: paths => ipcRenderer.invoke('images:import', paths),
   importLogo: () => ipcRenderer.invoke('images:logo'),
   releaseImages: ids => ipcRenderer.invoke('images:release', ids),
-  preview: (snapshot, maxSize, region) =>
-    ipcRenderer.invoke('images:preview', snapshot, maxSize, region),
+  preview: (snapshot, maxSize, region, annotationsOnly) =>
+    ipcRenderer.invoke(
+      'images:preview',
+      snapshot,
+      maxSize,
+      region,
+      annotationsOnly,
+    ),
   exportImage: snapshot => ipcRenderer.invoke('images:export', snapshot),
   cancelExport: () => ipcRenderer.invoke('images:cancel'),
   presets: {

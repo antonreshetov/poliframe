@@ -129,10 +129,15 @@ function inks(mat: string): Record<Role | 'rule', string> {
   }
 }
 
+const captionCache = new Map<string, CaptionImage>()
+let captionCacheBytes = 0
+const captionCacheBudget = 32 * 1024 * 1024
+
 function textRenderer(
   s: Composition,
   assets: Map<string, ImageAsset>,
   resources: string,
+  preview = false,
 ) {
   const cache = new Map<string, Promise<CaptionImage>>()
   return (
@@ -140,7 +145,21 @@ function textRenderer(
     width: number,
     scale: number,
   ): Promise<CaptionImage> => {
-    const key = `${photoId}:${width}:${scale}`
+    const key = JSON.stringify([
+      preview,
+      resources,
+      s.caption,
+      s.mat,
+      photoId ? assets.get(photoId)?.exif : null,
+      width,
+      scale,
+    ])
+    const cached = captionCache.get(key)
+    if (cached) {
+      captionCache.delete(key)
+      captionCache.set(key, cached)
+      return Promise.resolve(cached)
+    }
     const previous = cache.get(key)
     if (previous)
       return previous
@@ -193,7 +212,7 @@ function textRenderer(
           .png()
           .toBuffer({ resolveWithObject: true })
         return {
-          input: await toWorkingImage(data),
+          input: preview ? data : await toWorkingImage(data),
           width: info.width,
           height: info.height,
           size: pointSize * scale,
@@ -214,8 +233,10 @@ function textRenderer(
                 ['copyright', 'exif'],
               ]
         for (const roles of rows) {
-          const left = await render(roles[0], colWidth, 'left')
-          const right = await render(roles[1], colWidth, 'right')
+          const [left, right] = await Promise.all([
+            render(roles[0], colWidth, 'left'),
+            render(roles[1], colWidth, 'right'),
+          ])
           if (!left && !right)
             continue
           if (out.height)
@@ -286,8 +307,31 @@ function textRenderer(
       }
       return out
     })()
-    cache.set(key, pending)
-    return pending
+    const remembered = pending.then((result) => {
+      const bytes = result.pieces.reduce(
+        (sum, piece) => sum + piece.input.byteLength,
+        0,
+      )
+      if (bytes <= captionCacheBudget) {
+        while (
+          (captionCacheBytes + bytes > captionCacheBudget
+            || captionCache.size >= 128)
+          && captionCache.size
+        ) {
+          const oldest = captionCache.keys().next().value!
+          captionCacheBytes -= captionCache
+            .get(oldest)!
+            .pieces
+            .reduce((sum, piece) => sum + piece.input.byteLength, 0)
+          captionCache.delete(oldest)
+        }
+        captionCache.set(key, result)
+        captionCacheBytes += bytes
+      }
+      return result
+    })
+    cache.set(key, remembered)
+    return remembered
   }
 }
 
@@ -742,4 +786,126 @@ export async function compose(
     .toColourspace('rgb16')
     .withIccProfile('p3')
   return { pipeline, layout }
+}
+
+const watermarkPreviewCache = new PreviewCache(16 * 1024 * 1024)
+const captionPreviewPixels = new WeakMap<
+  Buffer,
+  { factor: number, dataUrl: string }
+>()
+
+/** Photo layers stay decoded in Chromium; only caption pixels cross the worker boundary. */
+export async function annotationPreview(
+  snapshot: Composition,
+  assets: ImageAsset[],
+  resources: string,
+  maxSize: number,
+): Promise<PreviewResult> {
+  const captions = textRenderer(
+    snapshot,
+    new Map(assets.map(asset => [asset.id, asset])),
+    resources,
+    true,
+  )
+  const layout = await calculateLayout(
+    snapshot,
+    assets,
+    async (id, width, scale) => (await captions(id, width, scale)).height,
+  )
+  const factor = Math.min(1, maxSize / Math.max(layout.width, layout.height))
+  const annotationLayers: NonNullable<PreviewResult['annotationLayers']> = []
+  for (const cap of layout.captions) {
+    const text = await captions(
+      cap.photoId,
+      Math.max(1, cap.width - cap.paddingX * 2),
+      cap.scale,
+    )
+    for (const piece of text.pieces) {
+      const info = await sharp(piece.input).metadata()
+      const rasterFactor = Math.min(1, Math.ceil(factor * 16) / 16)
+      let pixels = captionPreviewPixels.get(piece.input)
+      if (!pixels || pixels.factor !== rasterFactor) {
+        const data = await sharp(piece.input)
+          .resize(
+            Math.max(1, Math.round(info.width! * rasterFactor)),
+            Math.max(1, Math.round(info.height! * rasterFactor)),
+          )
+          .withIccProfile('srgb')
+          .toColourspace('srgb')
+          .png()
+          .toBuffer()
+        pixels = {
+          factor: rasterFactor,
+          dataUrl: `data:image/png;base64,${data.toString('base64')}`,
+        }
+        captionPreviewPixels.set(piece.input, pixels)
+      }
+      annotationLayers.push({
+        x: cap.x + cap.paddingX + piece.x,
+        y: cap.y + cap.paddingTop + piece.y,
+        width: info.width!,
+        height: info.height!,
+        dataUrl: pixels.dataUrl,
+      })
+    }
+  }
+  const wm = snapshot.watermark
+  if (wm.photoId && wm.size > 0 && wm.opacity > 0 && layout.cells.length) {
+    const logo = assets.find(asset => asset.id === wm.photoId)
+    if (!logo)
+      throw new Error('Watermark image is unavailable')
+    const minX = Math.min(...layout.cells.map(cell => cell.x))
+    const minY = Math.min(...layout.cells.map(cell => cell.y))
+    const areaW
+      = Math.max(...layout.cells.map(cell => cell.x + cell.width)) - minX
+    const areaH
+      = Math.max(...layout.cells.map(cell => cell.y + cell.height)) - minY
+    const width = Math.min(areaW, (areaW * wm.size) / 100)
+    const height = (width * logo.height) / logo.width
+    const margin = Math.min(areaW, areaH) * 0.03
+    const x = wm.position.endsWith('Left')
+      ? minX + margin
+      : wm.position.endsWith('Right')
+        ? minX + areaW - width - margin
+        : minX + (areaW - width) / 2
+    const y = wm.position.startsWith('top')
+      ? minY + margin
+      : wm.position.startsWith('bottom')
+        ? minY + areaH - height - margin
+        : minY + (areaH - height) / 2
+    const info = await stat(logo.path)
+    const key = JSON.stringify([
+      logo.path,
+      info.size,
+      info.mtimeMs,
+      info.ctimeMs,
+    ])
+    const pixels = await watermarkPreviewCache.get(key, () =>
+      openImage(logo.path)
+        .resize({
+          width: 2200,
+          height: 2200,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .withIccProfile('srgb')
+        .toColourspace('srgb')
+        .png()
+        .toBuffer())
+    annotationLayers.push({
+      x,
+      y,
+      width,
+      height,
+      opacity: wm.opacity / 100,
+      dataUrl: `data:image/png;base64,${pixels.toString('base64')}`,
+    })
+  }
+  return {
+    revision: snapshot.revision,
+    layout,
+    dataUrl: '',
+    annotationLayers,
+    gestureImages: await gestureImages(snapshot, assets),
+  }
 }

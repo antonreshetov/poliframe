@@ -155,6 +155,8 @@ async function dropLogo(event: DragEvent) {
         :min="20"
         :max="200"
         suffix="%"
+        @interaction-start="e.beginSpacing"
+        @interaction-end="e.endSpacing"
       />
       <CheckField
         v-model="e.state.caption.separatePadding"
@@ -168,6 +170,8 @@ async function dropLogo(event: DragEvent) {
         "
         :max="e.state.units === 'percent' ? 20 : 300"
         :suffix="e.state.units === 'percent' ? '%' : 'px'"
+        @interaction-start="e.beginSpacing"
+        @interaction-end="e.endSpacing"
         @update:model-value="
           !e.state.caption.separatePadding && (measure.captionBottom = $event)
         "
@@ -178,12 +182,16 @@ async function dropLogo(event: DragEvent) {
         label="Bottom padding"
         :max="e.state.units === 'percent' ? 20 : 300"
         :suffix="e.state.units === 'percent' ? '%' : 'px'"
+        @interaction-start="e.beginSpacing"
+        @interaction-end="e.endSpacing"
       />
       <NumberField
         v-model="measure.captionHorizontal"
         label="Horizontal padding"
         :max="e.state.units === 'percent' ? 20 : 300"
         :suffix="e.state.units === 'percent' ? '%' : 'px'"
+        @interaction-start="e.beginSpacing"
+        @interaction-end="e.endSpacing"
       />
     </template>
     <section class="space-y-3 border-t pt-3">
@@ -240,6 +248,8 @@ async function dropLogo(event: DragEvent) {
           v-model="e.state.watermark.opacity"
           label="Opacity"
           suffix="%"
+          @interaction-start="e.beginSpacing"
+          @interaction-end="e.endSpacing"
         />
         <NumberField
           v-model="e.state.watermark.size"
@@ -247,6 +257,8 @@ async function dropLogo(event: DragEvent) {
           :min="5"
           :max="60"
           suffix="%"
+          @interaction-start="e.beginSpacing"
+          @interaction-end="e.endSpacing"
         />
       </template>
       <div
