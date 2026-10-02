@@ -126,6 +126,17 @@ function leaves(
   })
 }
 
+/** Lightweight grid geometry shared by interactive dragging and native composition. */
+export function gridCells(
+  node: GridNode,
+  rect: Rect,
+  gap: number,
+): CellLayout[] {
+  const cells: CellLayout[] = []
+  leaves(node, rect, gap, cells)
+  return cells
+}
+
 /** Shared output geometry. A native text measurer is supplied by the renderer. */
 export async function calculateLayout(
   s: Composition,

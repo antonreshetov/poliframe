@@ -25,6 +25,8 @@ function evaluate(code, imports = {}, window = {}) {
       window,
       setTimeout,
       clearTimeout,
+      requestAnimationFrame: callback => setTimeout(callback, 0),
+      cancelAnimationFrame: clearTimeout,
       require: (name) => {
         if (name === 'vue')
           return vue
@@ -243,4 +245,83 @@ test('preset changes made during an asynchronous update remain marked unsaved', 
   assert.equal(editor.presetModified, true)
   editor.state.mat = '#F4EFE3'
   assert.equal(editor.presetModified, false)
+})
+
+test('grid divider uses live geometry without mutating the render model until release', async (t) => {
+  const { editor, leaves } = setup(t)
+  await flush()
+  editor.state.layout = 'grid'
+  editor.state.grid = defaultsModule.gridTemplate('1x2')
+  const geometry = evaluate(source('src/shared/layout.ts'))
+  const base = await geometry.calculateLayout(editor.state, [])
+  editor.preview = { revision: 0, dataUrl: 'data:,', layout: base }
+  const { descriptor } = parse(
+    source('src/renderer/components/editor/PreviewCanvas.vue'),
+  )
+  const compiled = compileScript(descriptor, { id: 'grid-drag-regression' })
+  let controls
+  const component = evaluate(
+    compiled.content,
+    {
+      '@lucide/vue': {},
+      '@/components/ui/button': {},
+      '@/composables/useEditor': { useEditorContext: () => editor, leaves },
+      '../../../shared/layout': geometry,
+    },
+    { devicePixelRatio: 1, addEventListener() {}, removeEventListener() {} },
+  ).default
+  // Run setup inside a component scope, but leave browser-only mount hooks uncalled.
+  const scope = vue.effectScope()
+  t.after(() => scope.stop())
+  const originalWarn = console.warn
+  console.warn = () => {}
+  try {
+    controls = scope.run(() =>
+      component.setup({ zoom: null }, { expose() {}, emit() {} }),
+    )
+  }
+  finally {
+    console.warn = originalWarn
+  }
+  const handlers = new Map()
+  const target = {
+    setPointerCapture() {},
+    addEventListener: (name, handler) => handlers.set(name, handler),
+    removeEventListener: name => handlers.delete(name),
+  }
+  const original = JSON.stringify(editor.state.grid)
+  const history = editor.history.length
+  controls.resize(
+    {
+      preventDefault() {},
+      stopPropagation() {},
+      currentTarget: target,
+      pointerId: 1,
+      clientX: 100,
+    },
+    controls.dividers.value[0],
+  )
+  for (let i = 0; i < 100; i++)
+    handlers.get('pointermove')({ clientX: 130 + i / 10, metaKey: true })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(
+    JSON.stringify(editor.state.grid),
+    original,
+    'drag must not schedule native renders',
+  )
+  assert.equal(editor.history.length, history)
+  assert.notEqual(
+    controls.layout.value.cells[0].width,
+    base.cells[0].width,
+    'live cell must follow the pointer',
+  )
+  handlers.get('pointerup')({ type: 'pointerup' })
+  assert.notEqual(JSON.stringify(editor.state.grid), original)
+  assert.equal(
+    editor.history.length,
+    history + 1,
+    'one gesture is one undo entry',
+  )
+  editor.undo()
+  assert.equal(JSON.stringify(editor.state.grid), original)
 })
