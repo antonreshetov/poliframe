@@ -1,18 +1,6 @@
 <script setup lang="ts">
 import type { GridNode, PreviewResult, Rect } from '../../../shared/contracts'
-import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  Crop,
-  Image,
-  ImagePlus,
-  Merge,
-  Plus,
-  Trash2,
-  X,
-} from '@lucide/vue'
+import { Crop, Image, ImagePlus, Merge, Plus, Trash2, X } from '@lucide/vue'
 import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { Button } from '@/components/ui/button'
 import { leaves, useEditorContext } from '@/composables/useEditor'
@@ -1053,9 +1041,7 @@ function key(event: KeyboardEvent) {
       :style="toolbarPosition"
     >
       <Button
-        v-for="(icon, index) in e.selected.length === 1
-          ? [ArrowLeft, ArrowRight, ArrowUp, ArrowDown]
-          : []"
+        v-for="(_, index) in e.selected.length === 1 ? 4 : 0"
         :key="index"
         variant="ghost"
         size="icon-sm"
@@ -1065,7 +1051,30 @@ function key(event: KeyboardEvent) {
         :title="['Split left', 'Split right', 'Split up', 'Split down'][index]"
         @click="e.split(index < 2 ? 'horizontal' : 'vertical', index % 2 === 0)"
       >
-        <component :is="icon" />
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+        >
+          <rect
+            x="2"
+            y="4"
+            width="20"
+            height="16"
+            rx="2"
+            stroke="currentColor"
+            stroke-width="1.75"
+          />
+          <rect
+            :x="index === 1 ? 12.5 : 4.5"
+            :y="index === 3 ? 12.5 : 6.5"
+            :width="index < 2 ? 7 : 15"
+            :height="index < 2 ? 11 : 5"
+            rx=".7"
+            fill="currentColor"
+          />
+        </svg>
       </Button><Button
         v-if="e.selected.length === 1 && selectedCell?.photoId"
         variant="ghost"
@@ -1165,9 +1174,6 @@ function key(event: KeyboardEvent) {
 }
 .cell-overlay.empty {
   background: #8888881a;
-}
-.preview-image:not(.is-interacting) .cell-overlay:hover {
-  border-color: var(--primary);
 }
 .cell-overlay.selected {
   border-color: var(--primary);
