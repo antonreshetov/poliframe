@@ -220,6 +220,22 @@ test('Compose mode handlers ignore deselection and accept valid layout and units
     assert.equal(editor.state.layout, 'grid')
     assert.equal(editor.state.units, 'pixels')
   }
+  editor.state.panels = [{ photoId: 'a' }, { photoId: 'b' }]
+  const rows = [{ offsetTop: 0, offsetHeight: 48 }, { offsetTop: 52, offsetHeight: 48 }]
+  const list = { querySelectorAll: () => rows, getBoundingClientRect: () => ({ top: 100 }) }
+  controls.startPanelDrag({ currentTarget: { parentElement: list } }, 'a')
+  controls.movePanelDrag({ currentTarget: list, clientY: 154 })
+  assert.deepEqual(Array.from(controls.dragOrder.value), ['b', 'a'])
+  rows[0].offsetTop = 52
+  rows[1].offsetTop = 0
+  for (const y of [154, 151, 149, 152, 154]) {
+    controls.movePanelDrag({ currentTarget: list, clientY: y })
+    assert.deepEqual(Array.from(controls.dragOrder.value), ['b', 'a'])
+  }
+  assert.deepEqual(editor.state.panels.map(panel => panel.photoId), ['a', 'b'])
+  controls.movePanelDrag({ currentTarget: list, clientY: 140 })
+  assert.deepEqual(Array.from(controls.dragOrder.value), ['a', 'b'])
+  controls.endPanelDrag()
   controls.setLayout('vertical')
   controls.setUnits('percent')
   assert.equal(editor.state.layout, 'vertical')

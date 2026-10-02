@@ -24,6 +24,7 @@ import NumberField from './NumberField.vue'
 const e = useEditorContext()
 const dragging = ref('')
 const dragOrder = ref<string[] | null>(null)
+let dragSlots: { top: number, bottom: number }[] = []
 const displayedPanels = computed(() =>
   dragOrder.value
     ? dragOrder.value
@@ -32,6 +33,13 @@ const displayedPanels = computed(() =>
     : e.state.panels,
 )
 function startPanelDrag(event: DragEvent, id: string) {
+  const list = (event.currentTarget as HTMLElement).parentElement!
+  dragSlots = Array.from(list.querySelectorAll<HTMLElement>('.photo-row')).map(
+    row => ({
+      top: row.offsetTop,
+      bottom: row.offsetTop + row.offsetHeight,
+    }),
+  )
   dragging.value = id
   dragOrder.value = e.state.panels.map(panel => panel.photoId)
   if (event.dataTransfer) {
@@ -43,15 +51,17 @@ function movePanelDrag(event: DragEvent) {
   if (!dragOrder.value || !dragging.value)
     return
   const list = event.currentTarget as HTMLElement
-  const rows = Array.from(list.querySelectorAll<HTMLElement>('.photo-row'))
-  const top = list.getBoundingClientRect().top
-  const target = rows.findIndex((row) => {
-    const rowTop = top + row.offsetTop
-    return (
-      event.clientY >= rowTop && event.clientY <= rowTop + row.offsetHeight
-    )
-  })
+  const y = event.clientY - list.getBoundingClientRect().top
   const from = dragOrder.value.indexOf(dragging.value)
+  const current = dragSlots[from]
+  if (!current)
+    return
+  // Keep a small dead zone around the current slot so boundary jitter cannot reverse a move.
+  if (y >= current.top - 4 && y <= current.bottom + 4)
+    return
+  const target = dragSlots.findIndex(
+    slot => y >= slot.top && y <= slot.bottom,
+  )
   if (target < 0 || from === target)
     return
   const next = [...dragOrder.value]
@@ -61,6 +71,7 @@ function movePanelDrag(event: DragEvent) {
 function endPanelDrag() {
   dragging.value = ''
   dragOrder.value = null
+  dragSlots = []
 }
 function dropPanel(event: DragEvent, id: string) {
   if (dragging.value && dragOrder.value) {
