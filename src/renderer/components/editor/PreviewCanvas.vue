@@ -16,6 +16,7 @@ import {
 import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { Button } from '@/components/ui/button'
 import { leaves, useEditorContext } from '@/composables/useEditor'
+import { gridCells } from '../../../shared/layout'
 
 const { zoom } = defineProps<{ zoom: number | null }>()
 const emit = defineEmits<{
@@ -55,7 +56,49 @@ onUnmounted(() => {
   clearTimeout(regionTimer)
   regionGeneration++
 })
-const layout = computed(() => e.preview?.layout)
+const draftGrid = ref<GridNode | null>(null)
+const dragBacking = ref<PreviewResult | null>(null)
+const resizing = ref(false)
+let finishResize: (() => void) | undefined
+onUnmounted(() => finishResize?.())
+const layout = computed(() => {
+  const base = dragBacking.value?.layout ?? e.preview?.layout
+  if (!base || !draftGrid.value || !base.cells.length)
+    return base
+  const x = Math.min(...base.cells.map(cell => cell.x))
+  const y = Math.min(...base.cells.map(cell => cell.y))
+  const width = Math.max(...base.cells.map(cell => cell.x + cell.width)) - x
+  const height
+    = Math.max(...base.cells.map(cell => cell.y + cell.height)) - y
+  const measure = e.state[e.state.units]
+  const gap
+    = e.state.units === 'pixels'
+      ? measure.gap
+      : (measure.gap / 100) * Math.min(base.width, base.height)
+  return {
+    ...base,
+    cells: gridCells(draftGrid.value, { x, y, width, height }, gap),
+  }
+})
+watch(
+  () => e.preview,
+  () => {
+    if (!resizing.value) {
+      draftGrid.value = null
+      dragBacking.value = null
+    }
+  },
+)
+watch(
+  () => e.state.grid,
+  () => {
+    if (resizing.value || e.state.layout !== 'grid' || !e.preview)
+      return
+    dragBacking.value ??= e.preview
+    draftGrid.value = JSON.parse(JSON.stringify(e.state.grid))
+  },
+  { deep: true },
+)
 const fitScale = computed(() =>
   !layout.value
     ? 1 / dpr.value
@@ -70,6 +113,22 @@ const scale = computed(() =>
     ? fitScale.value
     : Math.max(fitScale.value, Math.min(100, zoom) / 100 / dpr.value),
 )
+function liveCellStyle(cell: Rect & { id: string, photoId: string | null }) {
+  const backing = dragBacking.value
+  const original = backing?.layout.cells.find(
+    item => item.photoId === cell.photoId && cell.photoId,
+  )
+  if (!backing || !original?.photoId)
+    return { backgroundColor: e.state.mat }
+  const factor
+    = Math.max(cell.width / original.width, cell.height / original.height)
+      * scale.value
+  return {
+    backgroundImage: `url("${backing.dataUrl}")`,
+    backgroundSize: `${backing.layout.width * factor}px ${backing.layout.height * factor}px`,
+    backgroundPosition: `${-original.x * factor + (cell.width * scale.value - original.width * factor) / 2}px ${-original.y * factor + (cell.height * scale.value - original.height * factor) / 2}px`,
+  }
+}
 function clampPan() {
   if (!layout.value || scale.value <= fitScale.value) {
     pan.value = { x: 0, y: 0 }
@@ -165,6 +224,7 @@ watch(
     () => e.renderRevision,
     () => e.preview,
     () => e.rendering,
+    resizing,
     visibleRegion,
     scale,
   ],
@@ -175,7 +235,8 @@ watch(
     const region = visibleRegion.value
     const backing = e.preview
     if (
-      !region
+      resizing.value
+      || !region
       || !backing
       || e.rendering
       || backing.revision !== e.renderRevision
@@ -287,13 +348,20 @@ const dividers = computed(() => {
     }
     node.children.forEach(walk)
   }
-  walk(e.state.grid)
+  walk(draftGrid.value ?? e.state.grid)
   return result
 })
 function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
   event.stopPropagation()
   event.preventDefault()
-  e.checkpoint()
+  if (!e.preview)
+    return
+  dragBacking.value = e.preview
+  draftGrid.value = JSON.parse(JSON.stringify(e.state.grid))
+  divider = dividers.value.find(
+    item => item.node.id === divider.node.id && item.index === divider.index,
+  )!
+  resizing.value = true
   const target = event.currentTarget as HTMLElement
   target.setPointerCapture(event.pointerId)
   const horizontal = divider.node.axis === 'horizontal'
@@ -379,7 +447,7 @@ function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
     weights: [...item.node.weights],
   }))
   const start = horizontal ? event.clientX : event.clientY
-  const move = (ev: PointerEvent) => {
+  const applyMove = (ev: PointerEvent) => {
     for (const { item, weights } of initial) {
       const total = weights.reduce((a, b) => a + b, 0)
       const a = weights[item.index]!
@@ -430,11 +498,51 @@ function resize(event: PointerEvent, divider: (typeof dividers.value)[number]) {
       item.node.weights[item.index + 1] = (1 - fraction) * pair
     }
   }
-  const end = () => {
+  let frame = 0
+  let pending: PointerEvent | undefined
+  let changed = false
+  const move = (ev: PointerEvent) => {
+    pending = ev
+    if (!frame) {
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        if (pending) {
+          applyMove(pending)
+          changed = true
+          pending = undefined
+        }
+      })
+    }
+  }
+  let ended = false
+  const end = (ev?: PointerEvent) => {
+    if (ended)
+      return
+    ended = true
+    cancelAnimationFrame(frame)
+    if (pending && ev?.type !== 'pointercancel') {
+      applyMove(pending)
+      changed = true
+    }
     target.removeEventListener('pointermove', move)
     target.removeEventListener('pointerup', end)
     target.removeEventListener('pointercancel', end)
+    window.removeEventListener('pointerup', end, true)
+    window.removeEventListener('pointercancel', end, true)
+    finishResize = undefined
+    resizing.value = false
+    if (ev?.type === 'pointerup' && changed && draftGrid.value) {
+      e.checkpoint()
+      e.state.grid = JSON.parse(JSON.stringify(draftGrid.value))
+    }
+    else {
+      draftGrid.value = null
+      dragBacking.value = null
+    }
   }
+  finishResize = end
+  window.addEventListener('pointerup', end, true)
+  window.addEventListener('pointercancel', end, true)
   target.addEventListener('pointermove', move)
   target.addEventListener('pointerup', end)
   target.addEventListener('pointercancel', end)
@@ -568,6 +676,35 @@ function key(event: KeyboardEvent) {
           height: `${regionPreview.region.height * scale}px`,
         }"
       >
+      <div
+        v-if="draftGrid && layout"
+        class="pointer-events-none absolute inset-0"
+      >
+        <div
+          v-for="cell in dragBacking?.layout.cells"
+          :key="`old-${cell.id}`"
+          class="absolute"
+          :style="{
+            background: e.state.mat,
+            left: `${cell.x * scale}px`,
+            top: `${cell.y * scale}px`,
+            width: `${cell.width * scale}px`,
+            height: `${cell.height * scale}px`,
+          }"
+        />
+        <div
+          v-for="cell in layout.cells"
+          :key="cell.id"
+          class="absolute"
+          :style="{
+            ...liveCellStyle(cell),
+            left: `${cell.x * scale}px`,
+            top: `${cell.y * scale}px`,
+            width: `${cell.width * scale}px`,
+            height: `${cell.height * scale}px`,
+          }"
+        />
+      </div>
       <div
         v-if="e.state.layout === 'grid'"
         class="outer-tracks"
