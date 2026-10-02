@@ -7,7 +7,7 @@ export { default as TabsList } from './TabsList.vue'
 export { default as TabsTrigger } from './TabsTrigger.vue'
 
 export const tabsListVariants = cva(
-  'rounded-lg p-0.75 group-data-horizontal/tabs:h-8 data-[variant=line]:rounded-none group/tabs-list inline-flex w-fit items-center justify-center text-muted-foreground group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col',
+  'rounded-[5px] p-0 group-data-horizontal/tabs:h-6 data-[variant=line]:rounded-none group/tabs-list inline-flex w-fit items-center justify-center text-muted-foreground group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col',
   {
     variants: {
       variant: {

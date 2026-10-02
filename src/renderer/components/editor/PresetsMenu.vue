@@ -54,7 +54,6 @@ async function apply() {
       </Button>
     </DropdownMenuTrigger>
     <DropdownMenuContent
-      class="w-max max-w-[min(360px,calc(100vw-32px))]"
       side="top"
       align="end"
     >

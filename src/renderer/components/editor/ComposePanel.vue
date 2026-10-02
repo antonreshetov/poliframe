@@ -10,14 +10,16 @@ import {
 import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  SegmentedControl as ToggleGroup,
+  SegmentedControlItem as ToggleGroupItem,
+} from '@/components/ui/segmented-control'
 import { useEditorContext } from '@/composables/useEditor'
 import { gridTemplate, matColors } from '../../../shared/defaults'
 import { gridCells } from '../../../shared/layout'
 import CheckField from './CheckField.vue'
 import ChoiceField from './ChoiceField.vue'
 import NumberField from './NumberField.vue'
-import ToggleGroup from './SegmentedControl.vue'
-import ToggleGroupItem from './SegmentedControlItem.vue'
 
 const e = useEditorContext()
 const dragging = ref('')

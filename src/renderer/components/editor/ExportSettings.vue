@@ -19,11 +19,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import {
+  SegmentedControl as ToggleGroup,
+  SegmentedControlItem as ToggleGroupItem,
+} from '@/components/ui/segmented-control'
 import { useEditorContext } from '@/composables/useEditor'
 import ChoiceField from './ChoiceField.vue'
 import NumberField from './NumberField.vue'
-import ToggleGroup from './SegmentedControl.vue'
-import ToggleGroupItem from './SegmentedControlItem.vue'
 
 const e = useEditorContext()
 const depth = computed({
