@@ -17,6 +17,19 @@ const viewport = ref<HTMLElement>()
 const size = ref({ width: 600, height: 600 })
 const pan = ref({ x: 0, y: 0 })
 const dragging = ref('')
+const dropTarget = ref('')
+let dragGhost: HTMLCanvasElement | undefined
+function endCellDrag() {
+  dragging.value = ''
+  dropTarget.value = ''
+  dragGhost?.remove()
+  dragGhost = undefined
+}
+function leaveCell(event: DragEvent) {
+  const cell = event.currentTarget as HTMLElement
+  if (!event.relatedTarget || !cell.contains(event.relatedTarget as Node))
+    dropTarget.value = ''
+}
 const dpr = ref(window.devicePixelRatio || 1)
 function updateDpr() {
   dpr.value = window.devicePixelRatio || 1
@@ -39,6 +52,7 @@ onMounted(() => {
     observer.observe(viewport.value)
 })
 onUnmounted(() => {
+  endCellDrag()
   observer?.disconnect()
   window.removeEventListener('resize', updateDpr)
   clearTimeout(regionTimer)
@@ -736,6 +750,61 @@ function clearSelection() {
   e.selected = []
   viewport.value?.focus({ preventScroll: true })
 }
+function startCellDrag(event: DragEvent, id: string) {
+  endCellDrag()
+  dragging.value = id
+  e.selected = [id]
+  const cell = layout.value?.cells.find(cell => cell.id === id)
+  if (!cell || !event.dataTransfer)
+    return
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', id)
+  const ratio = Math.min(scale.value, 120 / Math.max(cell.width, cell.height))
+  const width = cell.width * ratio
+  const height = cell.height * ratio
+  const canvas = document.createElement('canvas')
+  const pixelRatio = window.devicePixelRatio || 1
+  canvas.width = Math.ceil(width * pixelRatio)
+  canvas.height = Math.ceil(height * pixelRatio)
+  canvas.style.cssText = `position:fixed;left:-1000px;top:0;width:${width}px;height:${height}px;pointer-events:none`
+  const context = canvas.getContext('2d')
+  if (!context)
+    return
+  context.scale(pixelRatio, pixelRatio)
+  context.globalAlpha = 0.85
+  context.beginPath()
+  context.roundRect(0, 0, width, height, 5)
+  context.clip()
+  context.fillStyle = e.state.mat
+  context.fillRect(0, 0, width, height)
+  const image
+    = viewport.value?.querySelector<HTMLImageElement>('.composition-image')
+  const composition = e.preview?.layout
+  if (image?.complete && image.naturalWidth && composition) {
+    const sx = image.naturalWidth / composition.width
+    const sy = image.naturalHeight / composition.height
+    context.drawImage(
+      image,
+      cell.x * sx,
+      cell.y * sy,
+      cell.width * sx,
+      cell.height * sy,
+      0,
+      0,
+      width,
+      height,
+    )
+  }
+  context.strokeStyle = 'rgba(255,255,255,0.6)'
+  context.lineWidth = 1
+  context.beginPath()
+  context.roundRect(0.5, 0.5, width - 1, height - 1, 5)
+  context.stroke()
+  document.body.append(canvas)
+  dragGhost = canvas
+  event.dataTransfer.setDragImage(canvas, width / 2, height / 2)
+}
+
 function panStart(event: PointerEvent) {
   if (event.button === 0 && event.target === event.currentTarget)
     clearSelection()
@@ -829,8 +898,11 @@ function key(event: KeyboardEvent) {
     @keydown="key"
     @pointerdown="panStart"
     @wheel.prevent="wheel"
-    @dragover.prevent
-    @drop.prevent="!dragging && e.drop($event)"
+    @dragover.prevent="dropTarget = ''"
+    @drop.prevent="
+      !dragging && e.drop($event);
+      endCellDrag();
+    "
   >
     <div
       v-if="e.state.panels.length || e.state.layout === 'grid'"
@@ -940,8 +1012,9 @@ function key(event: KeyboardEvent) {
           :key="cell.id"
           class="cell-overlay"
           :class="{
-            selected: e.selected.includes(cell.id),
-            empty: !cell.photoId,
+            'selected': e.selected.includes(cell.id),
+            'empty': !cell.photoId,
+            'drop-target': dropTarget === cell.id,
           }"
           :style="{
             left: `${cell.x * scale}px`,
@@ -961,14 +1034,17 @@ function key(event: KeyboardEvent) {
               ? (e.cropId = cell.photoId)
               : e.add(undefined, undefined, cell.id)
           "
-          @dragstart="dragging = cell.id"
-          @dragend="dragging = ''"
-          @dragover.prevent
+          @dragstart="startCellDrag($event, cell.id)"
+          @dragend="endCellDrag"
+          @dragover.stop.prevent="
+            dropTarget = dragging === cell.id ? '' : cell.id
+          "
+          @dragleave="leaveCell"
           @drop.stop.prevent="
             dragging
               ? e.swap(dragging, cell.id)
               : e.drop($event, undefined, cell.id);
-            dragging = '';
+            endCellDrag();
           "
         >
           <Image
@@ -1182,6 +1258,11 @@ function key(event: KeyboardEvent) {
 }
 .cell-overlay.empty {
   background: #8888881a;
+}
+.cell-overlay.drop-target {
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+  border-color: var(--primary);
+  border-radius: 2px;
 }
 .cell-overlay.selected {
   border-color: var(--primary);
