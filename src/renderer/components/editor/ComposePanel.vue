@@ -272,9 +272,7 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
           <h3 class="text-xs">
             Template
           </h3>
-          <div
-            class="grid grid-cols-[repeat(auto-fill,34px)] gap-x-[5px] gap-y-[6px]"
-          >
+          <div class="flex flex-nowrap gap-1">
             <Button
               v-for="template in [
                 ...templates,
