@@ -60,7 +60,7 @@ watch(
     <section class="workspace">
       <div
         v-if="e.error"
-        class="flex items-start gap-3 border-b bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        class="absolute inset-x-4 top-4 z-20 flex items-start gap-3 rounded-md border bg-background px-4 py-3 text-sm text-destructive shadow-md"
         role="alert"
       >
         <span class="flex-1 whitespace-pre-line">{{ e.error }}</span><Button
@@ -78,15 +78,9 @@ watch(
         @scale="effectiveZoom = $event"
         @fit="fitZoom = $event"
       />
-      <div
-        v-if="e.preview?.layout.warnings.length"
-        class="border-t px-4 py-2 text-xs text-muted-foreground"
-      >
-        {{ e.preview.layout.warnings.join(" · ") }}
-      </div>
       <p
         v-if="e.status"
-        class="border-t px-4 py-2 text-xs text-muted-foreground"
+        class="absolute inset-x-4 bottom-16 z-20 rounded-md border bg-background px-4 py-2 text-xs text-muted-foreground shadow-md"
         role="status"
       >
         {{ e.status }}
@@ -202,6 +196,7 @@ watch(
   flex: 1;
 }
 .workspace {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;

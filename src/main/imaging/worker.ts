@@ -3,7 +3,7 @@ import type { Asset } from '../services/assets'
 import path from 'node:path'
 import process from 'node:process'
 import { parentPort } from 'node:worker_threads'
-import { compose } from './composition'
+import { compose, gestureImages } from './composition'
 import { exportImage } from './index'
 
 parentPort!.on(
@@ -46,6 +46,9 @@ parentPort!.on(
           result: {
             revision: job.snapshot.revision,
             region: job.region,
+            gestureImages: job.region
+              ? undefined
+              : await gestureImages(job.snapshot, job.assets),
             dataUrl: `data:image/jpeg;base64,${data.toString('base64')}`,
             layout,
           },

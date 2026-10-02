@@ -122,6 +122,12 @@ export interface LayoutResult {
   warnings: string[]
 }
 export interface PreviewResult {
+  gestureImages?: {
+    photoId: string
+    dataUrl: string
+    width: number
+    height: number
+  }[]
   region?: Rect
   revision: number
   dataUrl: string

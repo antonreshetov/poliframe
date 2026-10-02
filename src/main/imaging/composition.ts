@@ -5,14 +5,20 @@ import type {
   Composition,
   LayoutResult,
   Photo,
+  PreviewResult,
   Rect,
   Transform,
 } from '../../shared/contracts'
+import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import sharp from 'sharp'
 import { calculateLayout, effectiveSize } from '../../shared/layout'
 import { toWorkingImage, toWorkingPipeline } from './color'
 import { MAX_IMAGE_PIXELS, openImage, validateDimensions } from './index'
+import { PreviewCache } from './preview-cache'
+
+const previewSources = new PreviewCache(96 * 1024 * 1024)
+const previewTiles = new PreviewCache(48 * 1024 * 1024)
 
 export interface ImageAsset extends Photo {
   path: string
@@ -292,11 +298,14 @@ export async function transformImage(
   width: number,
   height: number,
   region?: Rect,
+  previewSource?: Buffer,
 ): Promise<Buffer> {
   effectiveSize(asset, transform)
   validateDimensions(region?.width ?? width, region?.height ?? height)
-  let pipeline = await toWorkingPipeline(asset.path)
-  let source = (await sharp(asset.path).metadata()).autoOrient
+  let pipeline = previewSource
+    ? openImage(previewSource)
+    : await toWorkingPipeline(asset.path)
+  let source = (await sharp(previewSource ?? asset.path).metadata()).autoOrient
   if (transform.rotation % 360) {
     const normalized = await pipeline.toBuffer()
     const data = await openImage(normalized)
@@ -348,6 +357,115 @@ export async function transformImage(
     .withIccProfile('p3')
     .tiff({ compression: 'lzw' })
     .toBuffer()
+}
+
+async function previewTile(
+  asset: ImageAsset,
+  transform: Transform,
+  width: number,
+  height: number,
+  region: Rect,
+  sourceSize: number,
+): Promise<Buffer> {
+  const info = await stat(asset.path)
+  const identity = JSON.stringify([
+    asset.path,
+    info.size,
+    info.mtimeMs,
+    info.ctimeMs,
+  ])
+  const bucket = sourceSize > 4096 ? 0 : sourceSize <= 2200 ? 2200 : 4096
+  const key = JSON.stringify([
+    identity,
+    transform,
+    width,
+    height,
+    region,
+    bucket,
+  ])
+  return previewTiles.get(key, async () => {
+    let source: Buffer | undefined
+    if (bucket) {
+      source = await previewSources.get(`${identity}:${bucket}`, async () =>
+        (await toWorkingPipeline(asset.path))
+          .resize({
+            width: bucket,
+            height: bucket,
+            fit: 'inside',
+            withoutEnlargement: true,
+          })
+          .tiff({ compression: 'none' })
+          .toBuffer())
+    }
+    return transformImage(asset, transform, width, height, region, source)
+  })
+}
+
+const gestureCache = new PreviewCache(24 * 1024 * 1024)
+/** Native gridLeafGestureImages equivalent: transformed photo, before cell cover-crop. */
+export async function gestureImages(
+  snapshot: Composition,
+  assets: ImageAsset[],
+): Promise<NonNullable<PreviewResult['gestureImages']>> {
+  if (snapshot.layout !== 'grid')
+    return []
+  const result: NonNullable<PreviewResult['gestureImages']> = []
+  const visible = new Set<string>()
+  const visit = (node: Composition['grid']) => {
+    if (node.type === 'leaf') {
+      if (node.photoId)
+        visible.add(node.photoId)
+    }
+    else {
+      node.children.forEach(visit)
+    }
+  }
+  visit(snapshot.grid)
+  for (const panel of snapshot.panels) {
+    if (!visible.has(panel.photoId))
+      continue
+    const asset = assets.find(item => item.id === panel.photoId)
+    if (!asset)
+      continue
+    const effective = effectiveSize(asset, panel.transform)
+    const factor = Math.min(
+      1,
+      2200 / Math.max(effective.width, effective.height),
+    )
+    const width = Math.max(1, Math.round(effective.width * factor))
+    const height = Math.max(1, Math.round(effective.height * factor))
+    const info = await stat(asset.path)
+    const key = JSON.stringify([
+      asset.path,
+      info.size,
+      info.mtimeMs,
+      info.ctimeMs,
+      panel.transform,
+    ])
+    const data = await gestureCache.get(key, async () => {
+      const tile = await previewTile(
+        asset,
+        panel.transform,
+        width,
+        height,
+        { x: 0, y: 0, width, height },
+        2200
+        / Math.min(panel.transform.crop.width, panel.transform.crop.height),
+      )
+      return openImage(tile)
+        .withIccProfile('srgb')
+        .toColourspace('srgb')
+        .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
+        .toBuffer()
+    })
+    result.push({
+      photoId: panel.photoId,
+      width,
+      height,
+      dataUrl: `data:image/jpeg;base64,${data.toString('base64')}`,
+    })
+  }
+  return result
 }
 
 /** Geometry always describes the full output; maxSize only reduces preview pixels. */
@@ -481,18 +599,42 @@ export async function compose(
       1,
       Math.round((cell.y + cell.height - view.y) * factor) - cellTop,
     )
-    const input = await transformImage(
-      asset,
-      panel.transform,
-      cellWidth,
-      cellHeight,
-      {
-        x: Math.max(0, -cellLeft),
-        y: Math.max(0, -cellTop),
-        width: rect.width,
-        height: rect.height,
-      },
-    )
+    const regionRect = {
+      x: Math.max(0, -cellLeft),
+      y: Math.max(0, -cellTop),
+      width: rect.width,
+      height: rect.height,
+    }
+    const render = (source?: Buffer) =>
+      transformImage(
+        asset,
+        panel.transform,
+        cellWidth,
+        cellHeight,
+        regionRect,
+        source,
+      )
+    let input: Buffer
+    if (maxSize !== undefined) {
+      const crop = panel.transform.crop
+      const sourceSize = region
+        ? Infinity
+        : Math.max(
+            2200,
+            Math.ceil(maxSize / Math.min(crop.width, crop.height)),
+          )
+      input = await previewTile(
+        asset,
+        panel.transform,
+        cellWidth,
+        cellHeight,
+        regionRect,
+        sourceSize,
+      )
+    }
+    else {
+      input = await render()
+    }
     overlays.push({ input, left: rect.left, top: rect.top })
   }
   for (const mask of layout.masks) {
