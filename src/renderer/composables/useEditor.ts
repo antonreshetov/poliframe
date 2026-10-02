@@ -532,10 +532,11 @@ export function useEditor() {
         createdAt: old?.createdAt ?? new Date().toISOString(),
         settings: settings(),
       }
+      const savedSignature = presetSignature()
       await window.poliframe.presets.save(preset)
       presets.value = await window.poliframe.presets.list()
       activePreset.value = preset.id
-      presetBaseline.value = presetSignature()
+      presetBaseline.value = savedSignature
     }
     catch (e) {
       fail(e)

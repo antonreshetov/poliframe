@@ -70,6 +70,28 @@ const scale = computed(() =>
     ? fitScale.value
     : Math.max(fitScale.value, Math.min(100, zoom) / 100 / dpr.value),
 )
+function clampPan() {
+  if (!layout.value || scale.value <= fitScale.value) {
+    pan.value = { x: 0, y: 0 }
+    return
+  }
+  const maxX = Math.max(
+    0,
+    (layout.value.width * scale.value - size.value.width) / 2,
+  )
+  const maxY = Math.max(
+    0,
+    (layout.value.height * scale.value - size.value.height) / 2,
+  )
+  pan.value = {
+    x: Math.max(-maxX, Math.min(maxX, pan.value.x)),
+    y: Math.max(-maxY, Math.min(maxY, pan.value.y)),
+  }
+}
+watch(
+  [scale, fitScale, () => layout.value?.width, () => layout.value?.height],
+  clampPan,
+)
 watch([fitScale, dpr], ([value, ratio]) => emit('fit', value * ratio * 100), {
   immediate: true,
 })
@@ -440,6 +462,7 @@ function panStart(event: PointerEvent) {
       x: old.x + ev.clientX - start.x,
       y: old.y + ev.clientY - start.y,
     }
+    clampPan()
   }
   const end = () => {
     target.removeEventListener('pointermove', move)

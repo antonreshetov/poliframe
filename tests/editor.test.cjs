@@ -117,7 +117,7 @@ function setup(t) {
   })
   app.mount({})
   t.after(() => app.unmount())
-  return { editor, registry, leaves }
+  return { editor, registry, leaves, api }
 }
 
 test('replacing more than the registry capacity reclaims originals and thumbnails', async (t) => {
@@ -220,4 +220,27 @@ test('Compose mode handlers ignore deselection and accept valid layout and units
   controls.setUnits('percent')
   assert.equal(editor.state.layout, 'vertical')
   assert.equal(editor.state.units, 'percent')
+})
+
+test('preset changes made during an asynchronous update remain marked unsaved', async (t) => {
+  const { editor, api } = setup(t)
+  await flush()
+  let finishSave
+  let stored
+  api.presets.save = (preset) => {
+    stored = JSON.parse(JSON.stringify(preset))
+    return new Promise((resolve) => {
+      finishSave = resolve
+    })
+  }
+  api.presets.list = async () => [stored]
+  editor.state.mat = '#F4EFE3'
+  const saving = editor.savePreset('Async preset')
+  editor.state.mat = '#000000'
+  finishSave()
+  await saving
+  assert.equal(stored.settings.mat, '#F4EFE3')
+  assert.equal(editor.presetModified, true)
+  editor.state.mat = '#F4EFE3'
+  assert.equal(editor.presetModified, false)
 })
