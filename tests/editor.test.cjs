@@ -247,11 +247,11 @@ test('preset changes made during an asynchronous update remain marked unsaved', 
   assert.equal(editor.presetModified, false)
 })
 
-test('grid divider uses live geometry without mutating the render model until release', async (t) => {
+async function gridFixture(t, template = '1x2') {
   const { editor, leaves } = setup(t)
   await flush()
   editor.state.layout = 'grid'
-  editor.state.grid = defaultsModule.gridTemplate('1x2')
+  editor.state.grid = defaultsModule.gridTemplate(template)
   const geometry = evaluate(source('src/shared/layout.ts'))
   const base = await geometry.calculateLayout(editor.state, [])
   editor.preview = { revision: 0, dataUrl: 'data:,', layout: base }
@@ -260,6 +260,7 @@ test('grid divider uses live geometry without mutating the render model until re
   )
   const compiled = compileScript(descriptor, { id: 'grid-drag-regression' })
   let controls
+  const handlers = new Map()
   const component = evaluate(
     compiled.content,
     {
@@ -268,7 +269,7 @@ test('grid divider uses live geometry without mutating the render model until re
       '@/composables/useEditor': { useEditorContext: () => editor, leaves },
       '../../../shared/layout': geometry,
     },
-    { devicePixelRatio: 1, addEventListener() {}, removeEventListener() {} },
+    { devicePixelRatio: 1, addEventListener: (name, handler) => handlers.set(name, handler), removeEventListener: name => handlers.delete(name) },
   ).default
   // Run setup inside a component scope, but leave browser-only mount hooks uncalled.
   const scope = vue.effectScope()
@@ -283,12 +284,17 @@ test('grid divider uses live geometry without mutating the render model until re
   finally {
     console.warn = originalWarn
   }
-  const handlers = new Map()
   const target = {
+    parentElement: { getBoundingClientRect: () => ({ left: 0, top: 0 }) },
     setPointerCapture() {},
     addEventListener: (name, handler) => handlers.set(name, handler),
     removeEventListener: name => handlers.delete(name),
   }
+  return { editor, controls, handlers, target, base }
+}
+
+test('grid divider uses live geometry without mutating the render model until release', async (t) => {
+  const { editor, controls, handlers, target, base } = await gridFixture(t)
   const original = JSON.stringify(editor.state.grid)
   const history = editor.history.length
   controls.resize(
@@ -324,4 +330,52 @@ test('grid divider uses live geometry without mutating the render model until re
   )
   editor.undo()
   assert.equal(JSON.stringify(editor.state.grid), original)
+})
+
+test('Option divider snaps with hysteresis, reports percentages and preserves the other segment', async (t) => {
+  const { controls, handlers, target } = await gridFixture(t, '2x2')
+  const divider = controls.dividers.value.find(item => item.node.axis === 'horizontal')
+  const other = controls.dividers.value.find(item => item.node.axis === 'horizontal' && item.node.id !== divider.node.id)
+  const originalOther = JSON.stringify(other.node.weights)
+  controls.hoverDivider({ altKey: false }, divider)
+  assert.ok(controls.dividerFeedback.value.hi - controls.dividerFeedback.value.lo > divider.height)
+  controls.resize({ preventDefault() {}, stopPropagation() {}, currentTarget: target, pointerId: 1, clientX: 100, clientY: 100, altKey: true }, divider)
+  async function move(delta, metaKey = false) {
+    handlers.get('pointermove')({ clientX: 100 + delta, clientY: 100, metaKey })
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  await move(4)
+  assert.equal(controls.dividerFeedback.value.percent, 50)
+  assert.equal(controls.dividerFeedback.value.snapped, true)
+  assert.ok(Math.abs(controls.dividerFeedback.value.position - divider.x) < 1e-6)
+  await move(8)
+  assert.equal(controls.dividerFeedback.value.snapped, true)
+  await move(14)
+  assert.equal(controls.dividerFeedback.value.snapped, false)
+  await move(4, true)
+  assert.equal(controls.dividerFeedback.value.snapped, false)
+  assert.ok(Math.abs(controls.dividerFeedback.value.position - divider.x - 4 / controls.scale.value) < 1e-6)
+  assert.equal(JSON.stringify(other.node.weights), originalOther)
+  handlers.get('pointerup')({ type: 'pointerup' })
+  assert.equal(controls.dividerFeedback.value, null)
+})
+
+test('Option on a through divider splits the hovered segment and cancellation restores the tree', async (t) => {
+  const { editor, controls, handlers, target } = await gridFixture(t, '2x2')
+  const original = JSON.stringify(editor.state.grid)
+  const divider = controls.dividers.value.find(item => item.node.axis === 'vertical')
+  const event = { preventDefault() {}, stopPropagation() {}, currentTarget: target, pointerId: 1, clientX: (divider.x + divider.width / 4) * controls.scale.value, clientY: divider.y * controls.scale.value, altKey: true }
+  controls.hoverDivider(event, divider)
+  assert.ok(controls.dividerFeedback.value.hi - controls.dividerFeedback.value.lo < divider.width)
+  controls.resize(event, divider)
+  handlers.get('pointermove')({ clientX: event.clientX, clientY: event.clientY + 40, metaKey: true })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const segments = controls.dividers.value.filter(item => item.node.axis === 'vertical')
+  assert.equal(segments.length, 2)
+  assert.ok(Math.abs(segments[0].y - divider.y - 40 / controls.scale.value) < 1e-6)
+  assert.ok(Math.abs(segments[1].y - divider.y) < 1e-6)
+  assert.equal(JSON.stringify(editor.state.grid), original)
+  handlers.get('pointercancel')({ type: 'pointercancel' })
+  assert.equal(JSON.stringify(editor.state.grid), original)
+  assert.equal(controls.draftGrid.value, null)
 })
