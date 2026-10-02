@@ -536,3 +536,52 @@ test('drop highlight survives child transitions and clears on leave or drag end'
   assert.equal(controls.dragging.value, '')
   assert.equal(controls.dropTarget.value, '')
 })
+
+test('caption typing publishes layered previews during continuous input and finishes with latest text', async (t) => {
+  const { editor, api } = setup(t)
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 30))
+  const render = api.preview
+  let active = 0
+  let maxActive = 0
+  const published = []
+  const stop = vue.watch(() => editor.preview, (value) => {
+    if (value?.annotationLayers)
+      published.push(value.annotationLayers[0].dataUrl)
+  })
+  t.after(stop)
+  api.preview = async (snapshot, size, region, annotationsOnly) => {
+    assert.equal(annotationsOnly, true)
+    maxActive = Math.max(maxActive, ++active)
+    await new Promise(resolve => setTimeout(resolve, 25))
+    active--
+    return { ...await render(snapshot), dataUrl: '', annotationLayers: [{ x: 0, y: 0, width: 1, height: 1, dataUrl: snapshot.caption.title }] }
+  }
+  editor.state.caption.enabled = true
+  for (let i = 1; i <= 15; i++) {
+    editor.state.caption.title = `Text ${i}`
+    await new Promise(resolve => setTimeout(resolve, 8))
+  }
+  assert.ok(published.length >= 2, 'typing must not starve preview publication')
+  await new Promise(resolve => setTimeout(resolve, 90))
+  assert.equal(published.at(-1), 'Text 15')
+  assert.equal(maxActive, 1, 'preview requests must not accumulate')
+  assert.equal(editor.interactivePreview.annotationLayers[0].dataUrl, 'Text 15')
+})
+
+test('render indicator ignores short work and appears only after the delay', async (t) => {
+  const { editor, controls } = await gridFixture(t)
+  editor.rendering = true
+  await flush()
+  assert.equal(controls.showRendering.value, false)
+  await new Promise(resolve => setTimeout(resolve, 30))
+  editor.rendering = false
+  await flush()
+  assert.equal(controls.showRendering.value, false)
+  editor.rendering = true
+  await new Promise(resolve => setTimeout(resolve, 330))
+  assert.equal(controls.showRendering.value, true)
+  editor.rendering = false
+  await flush()
+  assert.equal(controls.showRendering.value, false)
+})

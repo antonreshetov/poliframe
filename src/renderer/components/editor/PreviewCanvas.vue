@@ -16,6 +16,23 @@ const e = useEditorContext()
 const viewport = ref<HTMLElement>()
 const size = ref({ width: 600, height: 600 })
 const pan = ref({ x: 0, y: 0 })
+const showRendering = ref(false)
+let renderingTimer: ReturnType<typeof setTimeout> | undefined
+watch(
+  () => e.rendering,
+  (active) => {
+    clearTimeout(renderingTimer)
+    if (!active) {
+      showRendering.value = false
+      return
+    }
+    renderingTimer = setTimeout(() => {
+      showRendering.value = true
+    }, 300)
+  },
+  { immediate: true },
+)
+onUnmounted(() => clearTimeout(renderingTimer))
 const dragging = ref('')
 const dropTarget = ref('')
 let dragGhost: HTMLCanvasElement | undefined
@@ -780,7 +797,23 @@ function startCellDrag(event: DragEvent, id: string) {
   const image
     = viewport.value?.querySelector<HTMLImageElement>('.composition-image')
   const composition = e.preview?.layout
-  if (image?.complete && image.naturalWidth && composition) {
+  const source = liveCellSource(cell)
+  const liveImage
+    = source
+      && Array.from(
+        viewport.value?.querySelectorAll<HTMLImageElement>('.live-cell-image')
+        ?? [],
+      ).find(item => item.getAttribute('src') === source.dataUrl)
+  if (e.interactivePreview && liveImage?.complete && liveImage.naturalWidth) {
+    const cover = Math.max(
+      width / liveImage.naturalWidth,
+      height / liveImage.naturalHeight,
+    )
+    const w = liveImage.naturalWidth * cover
+    const h = liveImage.naturalHeight * cover
+    context.drawImage(liveImage, (width - w) / 2, (height - h) / 2, w, h)
+  }
+  else if (image?.complete && image.naturalWidth && composition) {
     const sx = image.naturalWidth / composition.width
     const sy = image.naturalHeight / composition.height
     context.drawImage(
@@ -915,7 +948,7 @@ function key(event: KeyboardEvent) {
       }"
     >
       <img
-        v-if="e.preview"
+        v-if="e.preview?.dataUrl"
         v-show="!e.interactivePreview"
         :src="e.preview.dataUrl"
         alt="Composition"
@@ -987,6 +1020,24 @@ function key(event: KeyboardEvent) {
             height: `${mask.height * scale}px`,
           }"
         />
+        <div class="absolute inset-0 overflow-hidden pointer-events-none">
+          <img
+            v-for="(layer, index) in e.interactivePreview?.annotationLayers
+              ?? []"
+            :key="`annotation-${index}`"
+            :src="layer.dataUrl"
+            class="absolute pointer-events-none"
+            alt=""
+            draggable="false"
+            :style="{
+              left: `${layer.x * scale}px`,
+              top: `${layer.y * scale}px`,
+              width: `${layer.width * scale}px`,
+              height: `${layer.height * scale}px`,
+              opacity: layer.opacity ?? 1,
+            }"
+          >
+        </div>
       </div>
       <div
         v-if="e.state.layout === 'grid'"
@@ -1205,7 +1256,7 @@ function key(event: KeyboardEvent) {
       </Button>
     </div>
     <span
-      v-if="e.rendering"
+      v-if="showRendering"
       class="absolute right-4 top-4 rounded bg-background px-2 py-1 text-xs text-muted-foreground"
     >Rendering…</span>
   </div>

@@ -148,7 +148,14 @@ handle('images:release', (ids: unknown) => {
 })
 handle(
   'images:preview',
-  (snapshot: unknown, maxSize: unknown, region?: unknown) => {
+  (
+    snapshot: unknown,
+    maxSize: unknown,
+    region?: unknown,
+    annotationsOnly?: unknown,
+  ) => {
+    if (annotationsOnly !== undefined && typeof annotationsOnly !== 'boolean')
+      throw new Error('Invalid annotation preview mode')
     validateComposition(snapshot)
     if (
       region !== undefined
@@ -173,6 +180,7 @@ handle(
       resources,
       region,
       maxSize: Math.round(Math.max(400, Math.min(3200, maxSize))),
+      annotationsOnly: annotationsOnly === true && !region,
     })
   },
 )

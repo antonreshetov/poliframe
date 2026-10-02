@@ -46,10 +46,11 @@ export function useEditor() {
   let lastRenderStart = 0
   let lastStartedRevision = 0
   const renderWake = ref(0)
+  let decodedPreviewUrls = new Set<string>()
   let nativeRendering = false
   let renderAgain = false
   const canUseLocalGeometry = () =>
-    !state.value.caption.enabled && !state.value.watermark.photoId
+    !(state.value.caption.enabled || !!state.value.watermark.photoId)
   async function updateInteractive(revision: number) {
     const snapshot = clone(state.value)
     const layout = await calculateLayout(snapshot, Object.values(photos))
@@ -219,8 +220,22 @@ export function useEditor() {
           renderAgain = false
           lastRenderStart = Date.now()
           lastStartedRevision = revision
+          const annotationMode
+            = state.value.caption.enabled || !!state.value.watermark.photoId
+          const photoSignature = () =>
+            JSON.stringify([
+              state.value.panels,
+              state.value.grid,
+              state.value.layout,
+              state.value.watermark.photoId,
+            ])
+          const startedPhotos = photoSignature()
           const canPublish = () =>
             revision === generation
+            || (annotationMode
+              && (state.value.caption.enabled
+                || !!state.value.watermark.photoId)
+              && startedPhotos === photoSignature())
             || (spacingEditing.value
               && !canUseLocalGeometry()
               && revision === lastStartedRevision)
@@ -231,6 +246,8 @@ export function useEditor() {
             const result = await window.poliframe.preview(
               snapshot,
               previewSize.value,
+              undefined,
+              annotationMode,
             )
             if (!canPublish())
               return
@@ -239,18 +256,32 @@ export function useEditor() {
             if (typeof window.Image === 'function') {
               await Promise.all(
                 [
-                  result.dataUrl,
+                  ...(result.dataUrl ? [result.dataUrl] : []),
+                  ...(result.annotationLayers ?? []).map(
+                    layer => layer.dataUrl,
+                  ),
                   ...(result.gestureImages ?? []).map(image => image.dataUrl),
-                ].map(async (url) => {
-                  const image = new window.Image()
-                  image.src = url
-                  await image.decode()
-                }),
+                ]
+                  .filter(url => !decodedPreviewUrls.has(url))
+                  .map(async (url) => {
+                    const image = new window.Image()
+                    image.src = url
+                    await image.decode()
+                  }),
               )
             }
             if (canPublish()) {
+              decodedPreviewUrls = new Set([
+                ...(result.dataUrl ? [result.dataUrl] : []),
+                ...(result.annotationLayers ?? []).map(
+                  layer => layer.dataUrl,
+                ),
+                ...(result.gestureImages ?? []).map(image => image.dataUrl),
+              ])
               preview.value = result
-              interactivePreview.value = null
+              interactivePreview.value = result.annotationLayers
+                ? result
+                : null
             }
           }
           catch (e) {
