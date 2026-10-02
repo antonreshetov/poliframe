@@ -135,3 +135,26 @@
     color: var(--primary-foreground);
     border-color: transparent;
 }
+
+
+/* Press feedback is color-only, without positional animation. */
+[data-slot="button"]:active {
+    translate: none;
+}
+[data-slot="button"] {
+    transition-property: color, background-color, border-color;
+}
+[data-slot="button"].grid-template-thumb {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 5px;
+    border: 1px solid color-mix(in srgb, var(--muted-foreground) 25%, transparent);
+    background: transparent;
+    color: color-mix(in srgb, var(--muted-foreground) 40%, transparent);
+    transition: none;
+}
+[data-slot="button"].grid-template-thumb[aria-pressed="true"] {
+    border-color: var(--primary);
+    color: var(--primary);
+}

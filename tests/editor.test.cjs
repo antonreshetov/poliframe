@@ -206,6 +206,7 @@ test('Compose mode handlers ignore deselection and accept valid layout and units
     '@/components/ui/toggle-group': {},
     '@/composables/useEditor': { useEditorContext: () => editor },
     '../../../shared/defaults': defaultsModule,
+    '../../../shared/layout': evaluate(source('src/shared/layout.ts')),
     './CheckField.vue': {},
     './ChoiceField.vue': {},
     './NumberField.vue': {},

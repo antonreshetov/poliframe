@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useEditorContext } from '@/composables/useEditor'
-import { matColors } from '../../../shared/defaults'
+import { gridTemplate, matColors } from '../../../shared/defaults'
+import { gridCells } from '../../../shared/layout'
 import CheckField from './CheckField.vue'
 import ChoiceField from './ChoiceField.vue'
 import NumberField from './NumberField.vue'
@@ -15,56 +16,27 @@ const e = useEditorContext()
 const dragging = ref('')
 const measure = computed(() => e.state[e.state.units])
 const suffix = computed(() => (e.state.units === 'percent' ? '%' : 'px'))
-const templates = [
-  {
-    name: '2x2',
-    cells: [
-      [2, 2, 9, 9],
-      [13, 2, 9, 9],
-      [2, 13, 9, 9],
-      [13, 13, 9, 9],
-    ],
-  },
-  {
-    name: '3x3',
-    cells: Array.from({ length: 9 }, (_, i) => [
-      2 + (i % 3) * 7,
-      2 + Math.floor(i / 3) * 7,
-      6,
-      6,
-    ]),
-  },
-  {
-    name: '1x2',
-    cells: [
-      [2, 2, 9, 20],
-      [13, 2, 9, 20],
-    ],
-  },
-  {
-    name: '2x1',
-    cells: [
-      [2, 2, 20, 9],
-      [2, 13, 20, 9],
-    ],
-  },
-  {
-    name: '1+2',
-    cells: [
-      [2, 2, 9, 20],
-      [13, 2, 9, 9],
-      [13, 13, 9, 9],
-    ],
-  },
-  {
-    name: '1over2',
-    cells: [
-      [2, 2, 20, 9],
-      [2, 13, 9, 9],
-      [13, 13, 9, 9],
-    ],
-  },
-]
+const thumbnailSize = computed(() => {
+  const [w, h] = e.state.gridAspect.split(':').map(Number)
+  const aspect = Math.max(0.6, Math.min(1.7, w! / h!))
+  return aspect >= 1
+    ? { width: 28, height: 28 / aspect }
+    : { width: 28 * aspect, height: 28 }
+})
+function thumbnailCells(node: GridNode) {
+  const { width, height } = thumbnailSize.value
+  return gridCells(
+    node,
+    { x: (34 - width) / 2, y: (34 - height) / 2, width, height },
+    Math.max(1.2, Math.min(width, height) * 0.05),
+  )
+}
+const templates = computed(() =>
+  ['2x2', '3x3', '1x2', '2x1', '1+2', '1over2'].map(name => ({
+    name,
+    cells: thumbnailCells(gridTemplate(name)),
+  })),
+)
 function setLayout(value: unknown) {
   if (value === 'horizontal' || value === 'vertical' || value === 'grid')
     e.state.layout = value
@@ -175,32 +147,7 @@ const activeTemplate = computed(
       'V(LH(LL))': '1over2',
     })[gridSignature(e.state.grid)],
 )
-const customCells = computed(() => {
-  const cells: number[][] = []
-  function walk(
-    node: GridNode,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-  ) {
-    if (node.type === 'leaf') {
-      cells.push([x, y, width, height])
-      return
-    }
-    const sum = node.weights.reduce((a, b) => a + b, 0)
-    let offset = 0
-    node.children.forEach((child, i) => {
-      const fraction = node.weights[i]! / sum
-      node.axis === 'horizontal'
-        ? walk(child, x + width * offset, y, width * fraction, height)
-        : walk(child, x, y + height * offset, width, height * fraction)
-      offset += fraction
-    })
-  }
-  walk(e.state.grid, 2, 2, 20, 20)
-  return cells
-})
+const customCells = computed(() => thumbnailCells(e.state.grid))
 </script>
 
 <template>
@@ -325,58 +272,45 @@ const customCells = computed(() => {
           <h3 class="text-xs">
             Template
           </h3>
-          <div class="flex gap-1">
+          <div
+            class="grid grid-cols-[repeat(auto-fill,34px)] gap-x-[5px] gap-y-[6px]"
+          >
             <Button
-              v-for="template in templates"
+              v-for="template in [
+                ...templates,
+                ...(!activeTemplate
+                  ? [{ name: 'Custom', cells: customCells }]
+                  : []),
+              ]"
               :key="template.name"
-              :variant="
-                activeTemplate === template.name ? 'default' : 'outline'
+              variant="ghost"
+              size="icon"
+              class="grid-template-thumb"
+              :aria-pressed="
+                activeTemplate === template.name || template.name === 'Custom'
               "
-              size="icon"
-              :aria-label="`Grid template ${template.name}`"
+              :aria-label="
+                template.name === 'Custom'
+                  ? 'Custom grid'
+                  : `Grid template ${template.name}`
+              "
               :title="template.name === '1over2' ? '1 over 2' : template.name"
-              @click="e.template(template.name)"
+              @click="template.name !== 'Custom' && e.template(template.name)"
             >
               <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.2"
+                class="size-[34px]"
+                viewBox="0 0 34 34"
+                fill="currentColor"
                 aria-hidden="true"
               >
                 <rect
-                  v-for="(cell, index) in template.cells"
-                  :key="index"
-                  :x="cell[0]"
-                  :y="cell[1]"
-                  :width="cell[2]"
-                  :height="cell[3]"
-                  rx="1"
-                />
-              </svg>
-            </Button>
-            <Button
-              v-if="!activeTemplate"
-              variant="default"
-              size="icon"
-              aria-label="Custom grid"
-              title="Custom"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1"
-                aria-hidden="true"
-              >
-                <rect
-                  v-for="(cell, index) in customCells"
-                  :key="index"
-                  :x="cell[0]! + 0.5"
-                  :y="cell[1]! + 0.5"
-                  :width="Math.max(0, cell[2]! - 1)"
-                  :height="Math.max(0, cell[3]! - 1)"
-                  rx=".5"
+                  v-for="cell in template.cells"
+                  :key="cell.id"
+                  :x="cell.x"
+                  :y="cell.y"
+                  :width="cell.width"
+                  :height="cell.height"
+                  rx="1.5"
                 />
               </svg>
             </Button>
