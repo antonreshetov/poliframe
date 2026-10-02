@@ -1,5 +1,6 @@
 interface StoreSchema {
   bounds: object
+  devToolsOpen: boolean
 }
 
 export default async function createAppStore() {
@@ -7,6 +8,10 @@ export default async function createAppStore() {
   return new Store<StoreSchema>({
     name: 'app',
     schema: {
+      devToolsOpen: {
+        default: true,
+        type: 'boolean',
+      },
       bounds: {
         default: {},
         type: 'object',

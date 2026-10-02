@@ -31,8 +31,16 @@ function createWindow() {
   })
 
   if (isDev) {
+    mainWindow.webContents.on('devtools-opened', () => {
+      store.app.set('devToolsOpen', true)
+    })
+    mainWindow.webContents.on('devtools-closed', () => {
+      if (!isQuitting)
+        store.app.set('devToolsOpen', false)
+    })
     mainWindow.loadURL('http://127.0.0.1:5173')
-    mainWindow.webContents.openDevTools()
+    if (store.app.get('devToolsOpen'))
+      mainWindow.webContents.openDevTools()
   }
   else {
     mainWindow.loadFile(
