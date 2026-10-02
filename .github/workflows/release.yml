@@ -1,0 +1,158 @@
+name: Build and Draft Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.2.3)'
+        required: true
+      allowLockfileUpdate:
+        description: Allow updating pnpm-lock.yaml during install (useful for manual runs)
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.2
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # Strict install for tagged releases (reproducible builds)
+      - name: Install dependencies (frozen lockfile)
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.allowLockfileUpdate != 'true') }}
+        run: pnpm install --frozen-lockfile
+
+      # More permissive for manual runs when explicitly allowed
+      - name: Install dependencies (allow lockfile update)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.allowLockfileUpdate == 'true' }}
+        run: pnpm install
+
+      - name: Build (macOS)
+        if: startsWith(matrix.os, 'macos')
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret: $name"
+              exit 1
+            fi
+          done
+          pnpm vite build
+          pnpm run build:main
+          pnpm exec electron-builder --mac --x64 --arm64 -c.forceCodeSigning=true --publish never
+
+      - name: Build (Windows)
+        if: startsWith(matrix.os, 'windows')
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: |
+          pnpm vite build
+          pnpm run build:main
+          pnpm exec electron-builder --win --x64 --publish never
+
+      - name: Build (Linux, AppImage only)
+        if: startsWith(matrix.os, 'ubuntu')
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: |
+          pnpm vite build
+          pnpm run build:main
+          # Avoid snap in CI for reliability; build AppImage only
+          pnpm exec electron-builder --linux AppImage --x64 --publish never
+
+      - name: Upload artifacts (macOS)
+        if: startsWith(matrix.os, 'macos')
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-mac
+          path: |
+            dist/*.dmg
+            dist/*.pkg
+            dist/*.zip
+            dist/latest-mac.yml
+            dist/*.blockmap
+          if-no-files-found: error
+
+      - name: Upload artifacts (Windows)
+        if: startsWith(matrix.os, 'windows')
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-win
+          path: |
+            dist/*.exe
+            dist/*.msi
+            dist/latest.yml
+            dist/*.blockmap
+          if-no-files-found: error
+
+      - name: Upload artifacts (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux
+          path: |
+            dist/*.AppImage
+            dist/latest-linux.yml
+            dist/*.blockmap
+          if-no-files-found: error
+
+  release:
+    name: Create draft release and upload assets
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List downloaded files (debug)
+        run: |
+          echo "Downloaded artifacts:"
+          ls -R artifacts
+
+      - name: Create draft release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: Release ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: |
+            artifacts/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

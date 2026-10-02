@@ -1,0 +1,6 @@
+dist
+build/main
+build/renderer
+
+node_modules
+.DS_Store
