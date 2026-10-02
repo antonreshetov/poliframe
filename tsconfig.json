@@ -19,7 +19,8 @@
     "resolveJsonModule": true,
     "types": [
       "vite/client",
-      "node"
+      "node",
+      "web-bluetooth"
     ],
     "strict": true,
     "sourceMap": true,

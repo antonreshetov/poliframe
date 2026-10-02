@@ -9,7 +9,7 @@ export default async function createAppStore() {
     name: 'app',
     schema: {
       devToolsOpen: {
-        default: true,
+        default: false,
         type: 'boolean',
       },
       bounds: {

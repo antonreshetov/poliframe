@@ -1,25 +1,21 @@
-import type { EventCallback } from './types'
-import { contextBridge, ipcRenderer } from 'electron'
+import type { AppApi } from '../shared/contracts'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
-contextBridge.exposeInMainWorld('electron', {
-  ipc: {
-    on: (channel: string, cb: EventCallback) => ipcRenderer.on(channel, cb),
-    send: (channel: string, data: any, cb: EventCallback) => {
-      ipcRenderer.send(channel, data)
-      if (cb && typeof cb === 'function') {
-        ipcRenderer.on(channel, cb)
-      }
-    },
-    removeListener: (channel: string, cb: EventCallback) =>
-      ipcRenderer.removeListener(channel, cb),
-    removeListeners: (channel: string) =>
-      ipcRenderer.removeAllListeners(channel),
+const api: AppApi = {
+  importImages: paths => ipcRenderer.invoke('images:import', paths),
+  importLogo: () => ipcRenderer.invoke('images:logo'),
+  releaseImages: ids => ipcRenderer.invoke('images:release', ids),
+  preview: (snapshot, maxSize, region) =>
+    ipcRenderer.invoke('images:preview', snapshot, maxSize, region),
+  exportImage: snapshot => ipcRenderer.invoke('images:export', snapshot),
+  cancelExport: () => ipcRenderer.invoke('images:cancel'),
+  presets: {
+    list: () => ipcRenderer.invoke('presets:list'),
+    save: preset => ipcRenderer.invoke('presets:save', preset),
+    remove: id => ipcRenderer.invoke('presets:remove', id),
   },
-  updates: {
-    check: () => ipcRenderer.invoke('updates:check'),
-  },
-  db: {
-    query: (sql: string, params: any[] = []) =>
-      ipcRenderer.invoke('db-query', { sql, params }),
-  },
-})
+  info: () => ipcRenderer.invoke('app:info'),
+  checkUpdates: () => ipcRenderer.invoke('updates:check'),
+  droppedFilePath: file => webUtils.getPathForFile(file),
+}
+contextBridge.exposeInMainWorld('poliframe', api)

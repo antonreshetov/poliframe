@@ -1,12 +1,13 @@
 {
-  "appId": "com.example.app",
-  "productName": "Electron App",
+  "appId": "com.antonreshetov.poliframe.electron",
+  "productName": "Poliframe",
   "directories": {
     "output": "dist"
   },
   "files": [
     "build/renderer/**/*",
     "build/main/**/*",
+    "build/shared/**/*",
     "!build/**/*.map"
   ],
   "mac": {
@@ -37,16 +38,27 @@
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
-    "shortcutName": "Electron App",
+    "shortcutName": "Poliframe",
     "artifactName": "${name}-${version}-${arch}-setup.${ext}"
   },
   "publish": {
     "provider": "github",
     "owner": "antonreshetov",
-    "repo": "electron-vue-vite-boilerplate"
+    "repo": "poliframe"
   },
   "portable": {
     "artifactName": "${name}-${version}-${arch}-portable.${ext}"
   },
-  "artifactName": "${name}-${version}-${os}-${arch}.${ext}"
+  "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
+  "asarUnpack": [
+    "node_modules/sharp/**/*",
+    "node_modules/@img/**/*",
+    "node_modules/exiftool-vendored.*/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "resources",
+      "to": "resources"
+    }
+  ]
 }
