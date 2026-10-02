@@ -848,6 +848,7 @@ function key(event: KeyboardEvent) {
     >
       <img
         v-if="e.preview"
+        v-show="!e.interactivePreview"
         :src="e.preview.dataUrl"
         alt="Composition"
         draggable="false"
@@ -856,6 +857,7 @@ function key(event: KeyboardEvent) {
       >
       <img
         v-if="regionPreview?.region"
+        v-show="!e.interactivePreview"
         :src="regionPreview.dataUrl"
         alt=""
         draggable="false"
