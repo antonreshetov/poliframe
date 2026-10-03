@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import sharp from 'sharp'
 import { inject, it } from 'vitest'
 import { annotationPreview } from '../src/main/imaging/annotations.ts'
+import { createCaptionRenderer } from '../src/main/imaging/captions.ts'
 import { captionFonts } from '../src/main/imaging/fonts.ts'
 
 import { defaults } from '../src/shared/defaults.ts'
@@ -91,4 +92,46 @@ it('caption fonts survive the real render worker preview path', async (t) => {
   })
   assert.ok(actual.annotationLayers.length)
   assert.deepEqual(actual.annotationLayers, expected.annotationLayers)
+})
+
+it('preview caption PNG preserves the compression-level-six raster and layout metrics', async () => {
+  for (const scale of [1, 3]) {
+    const snapshot = defaults()
+    snapshot.caption.style = 'studio'
+    snapshot.caption.title = 'Caption wrapping across several words'
+    snapshot.caption.copyright = ''
+    snapshot.caption.showExif = false
+    snapshot.mat = '#FFFFFF'
+    const width = 500
+    const size = 16 * scale
+    const expected = await sharp({
+      text: {
+        text: `<span foreground="#2F2D2A" letter_spacing="${Math.round(-0.01 * size * 1024)}">${snapshot.caption.title}</span>`,
+        font: `${captionFonts['Inter-SemiBold']} ${size}`,
+        fontfile: resolve('resources/fonts/Inter-SemiBold.ttf'),
+        width: Math.max(1, Math.floor((width - 20 * scale) / 2)),
+        rgba: true,
+        align: 'left',
+        dpi: 72,
+      },
+    })
+      .png({ compressionLevel: 6 })
+      .toBuffer({ resolveWithObject: true })
+    const actual = await createCaptionRenderer(
+      snapshot,
+      new Map(),
+      resolve('resources'),
+      true,
+    )(null, width, scale)
+    assert.equal(actual.pieces.length, 1)
+    const [piece] = actual.pieces
+    assert.deepEqual(
+      { width: piece.width, height: piece.height, x: piece.x, y: piece.y },
+      { width: expected.info.width, height: expected.info.height, x: 0, y: 0 },
+    )
+    assert.equal(actual.height, expected.info.height)
+    const raw = (input: Buffer) =>
+      sharp(input).raw().toBuffer({ resolveWithObject: true })
+    assert.deepEqual(await raw(piece.input), await raw(expected.data))
+  }
 })

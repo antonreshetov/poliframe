@@ -202,7 +202,7 @@ export function createCaptionRenderer(
           text: textOptions,
           limitInputPixels: MAX_IMAGE_PIXELS,
         })
-          .png()
+          .png({ compressionLevel: preview ? 1 : 6 })
           .toBuffer({ resolveWithObject: true })
         const result = {
           input: preview ? data : await toWorkingImage(data),

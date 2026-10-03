@@ -8,12 +8,14 @@ import sharp from 'sharp'
 import { inject, it } from 'vitest'
 import { toWorkingPipeline } from '../src/main/imaging/color'
 import {
+  gestureImages,
   gesturePreview,
   previewSourceSize,
   transformImage,
 } from '../src/main/imaging/composition'
 import { openImage } from '../src/main/imaging/index'
 import { defaults, identityTransform } from '../src/shared/defaults'
+import { effectiveSize } from '../src/shared/layout'
 
 it('gesture acknowledgment skips payload only while visible content is unchanged', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'poliframe-gesture-'))
@@ -230,3 +232,88 @@ it('a restarted render worker honors published gesture keys and sends pixels to 
   assert.equal(region.gestureImagesKey, undefined)
   assert.equal(region.gestureImages, undefined)
 })
+
+it('gesture JPEG matches the LZW pipeline across source buckets, transforms and profiles', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'poliframe-gesture-pixels-'))
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }))
+  for (const profile of ['untagged', 'srgb', 'p3'] as const) {
+    const width = profile === 'untagged' ? 2400 : 48
+    const height = profile === 'untagged' ? 1600 : 32
+    const channels = profile === 'p3' ? 4 : 3
+    const pixels = Buffer.from(
+      Array.from(
+        { length: width * height * channels },
+        (_, i) => (i * 37 + Math.floor(i / 19)) % 256,
+      ),
+    )
+    const path = join(directory, `${profile}.tiff`)
+    let fixture = sharp(pixels, {
+      raw: { width, height, channels },
+    }).withMetadata({ orientation: 6 })
+    if (profile === 'untagged')
+      fixture = fixture.keepIccProfile()
+    else fixture = fixture.withIccProfile(profile).toColourspace('rgb16')
+    await fixture.tiff({ compression: 'lzw' }).toFile(path)
+    const oriented = (await sharp(path).metadata()).autoOrient
+    const asset = { id: profile, name: profile, path, ...oriented, exif: {} }
+    for (const [rotation, flipX, flipY, crop] of [
+      [0, false, false, { x: 0, y: 0, width: 1, height: 1 }],
+      [90, true, false, { x: 0.1, y: 0.05, width: 0.75, height: 0.8 }],
+      [270, true, true, { x: 0.2, y: 0.15, width: 0.4, height: 0.6 }],
+    ] as const) {
+      const transform = {
+        ...identityTransform(),
+        rotation,
+        flipX,
+        flipY,
+        crop,
+      }
+      const snapshot = defaults()
+      snapshot.panels = [{ photoId: asset.id, transform }]
+      const effective = effectiveSize(asset, transform)
+      const factor = Math.min(
+        1,
+        2200 / Math.max(effective.width, effective.height),
+      )
+      const outputWidth = Math.max(1, Math.round(effective.width * factor))
+      const outputHeight = Math.max(1, Math.round(effective.height * factor))
+      // Reproduce the original source selection and final LZW stage independently.
+      const sourceSize = 2200 / Math.min(crop.width, crop.height)
+      const bucket = [512, 1024, 2200, 4096].find(size => size >= sourceSize)
+      const source = bucket
+        ? await (
+            await toWorkingPipeline(path)
+          )
+            .resize({
+              width: bucket,
+              height: bucket,
+              fit: 'inside',
+              withoutEnlargement: true,
+            })
+            .tiff({ compression: 'none' })
+            .toBuffer()
+        : undefined
+      const tile = await transformImage(
+        asset,
+        transform,
+        outputWidth,
+        outputHeight,
+        { x: 0, y: 0, width: outputWidth, height: outputHeight },
+        source,
+      )
+      const expected = await openImage(tile)
+        .withIccProfile('srgb')
+        .toColourspace('srgb')
+        .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
+        .toBuffer()
+      const [actual] = await gestureImages(snapshot, [asset])
+      assert.equal(actual!.width, outputWidth)
+      assert.equal(actual!.height, outputHeight)
+      assert.deepEqual(
+        Buffer.from(actual!.dataUrl.split(',')[1]!, 'base64'),
+        expected,
+        `${profile}, rotation ${rotation}, crop ${crop.width}`,
+      )
+    }
+  }
+}, 30_000)

@@ -31,6 +31,7 @@ export async function transformImage(
   height: number,
   region?: Rect,
   previewSource?: Buffer,
+  compression: 'lzw' | 'none' = 'lzw',
 ): Promise<Buffer> {
   effectiveSize(asset, transform)
   validateDimensions(region?.width ?? width, region?.height ?? height)
@@ -81,7 +82,7 @@ export async function transformImage(
   return output
     .toColourspace('rgb16')
     .withIccProfile('p3')
-    .tiff({ compression: 'lzw' })
+    .tiff({ compression })
     .toBuffer()
 }
 
@@ -99,14 +100,7 @@ export function previewSourceSize(
   )
 }
 
-async function previewTile(
-  asset: ImageAsset,
-  transform: Transform,
-  width: number,
-  height: number,
-  region: Rect,
-  sourceSize: number,
-): Promise<Buffer> {
+async function previewSource(asset: ImageAsset, sourceSize: number) {
   const info = await stat(asset.path)
   const identity = JSON.stringify([
     asset.path,
@@ -116,6 +110,34 @@ async function previewTile(
   ])
   const bucket
     = [512, 1024, 2200, 4096].find(size => size >= sourceSize) ?? 0
+  return {
+    identity,
+    bucket,
+    load: () =>
+      bucket
+        ? previewSources.get(`${identity}:${bucket}`, async () =>
+            (await toWorkingPipeline(asset.path))
+              .resize({
+                width: bucket,
+                height: bucket,
+                fit: 'inside',
+                withoutEnlargement: true,
+              })
+              .tiff({ compression: 'none' })
+              .toBuffer())
+        : undefined,
+  }
+}
+
+async function previewTile(
+  asset: ImageAsset,
+  transform: Transform,
+  width: number,
+  height: number,
+  region: Rect,
+  sourceSize: number,
+): Promise<Buffer> {
+  const { identity, bucket, load } = await previewSource(asset, sourceSize)
   const key = JSON.stringify([
     identity,
     transform,
@@ -124,22 +146,8 @@ async function previewTile(
     region,
     bucket,
   ])
-  return previewTiles.get(key, async () => {
-    let source: Buffer | undefined
-    if (bucket) {
-      source = await previewSources.get(`${identity}:${bucket}`, async () =>
-        (await toWorkingPipeline(asset.path))
-          .resize({
-            width: bucket,
-            height: bucket,
-            fit: 'inside',
-            withoutEnlargement: true,
-          })
-          .tiff({ compression: 'none' })
-          .toBuffer())
-    }
-    return transformImage(asset, transform, width, height, region, source)
-  })
+  return previewTiles.get(key, async () =>
+    transformImage(asset, transform, width, height, region, await load()))
 }
 
 function visiblePanels(snapshot: Composition) {
@@ -229,14 +237,21 @@ export async function gestureImages(
       panel.transform,
     ])
     const data = await gestureCache.get(key, async () => {
-      const tile = await previewTile(
+      const source = await previewSource(
+        asset,
+        2200
+        / Math.min(panel.transform.crop.width, panel.transform.crop.height),
+      )
+      // This intermediate is consumed immediately; keep compressed tiles out of
+      // this path without retaining large uncompressed buffers in previewTiles.
+      const tile = await transformImage(
         asset,
         panel.transform,
         width,
         height,
         { x: 0, y: 0, width, height },
-        2200
-        / Math.min(panel.transform.crop.width, panel.transform.crop.height),
+        await source.load(),
+        'none',
       )
       return openImage(tile)
         .withIccProfile('srgb')
