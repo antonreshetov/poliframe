@@ -131,3 +131,25 @@ it('shutdown invalidation during metadata copy prevents publish without cancelli
   )
   assert.equal(calls.at(-1)[0], 'rm')
 })
+
+it('preview validates acknowledgment keys and keeps regions independent', async () => {
+  const { handlers, calls, snapshot } = await setup()
+  const preview = handlers.get('images:preview')
+  for (const key of [null, 42, '', 'x'.repeat(64), 'a'.repeat(65)]) {
+    assert.throws(
+      () => preview(snapshot, 1200, undefined, false, key),
+      /Invalid gesture images key/,
+    )
+  }
+  const key = 'a'.repeat(64)
+  await preview(snapshot, 1200, undefined, false, key)
+  assert.equal(calls.at(-1)[1].knownGestureImagesKey, key)
+  await preview(
+    snapshot,
+    1200,
+    { x: 0, y: 0, width: 10, height: 10 },
+    false,
+    key,
+  )
+  assert.equal(calls.at(-1)[1].knownGestureImagesKey, undefined)
+})

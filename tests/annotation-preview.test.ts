@@ -127,3 +127,64 @@ it('layered annotation preview preserves native caption geometry for every prese
     (await compose(plain, [photo], resolve('resources'), 1200)).layout,
   )
 })
+
+it('caption lines reuse unchanged pixels while isolating font, color, width, scale and working depth', async () => {
+  const { createCaptionRenderer }
+    = await import('../src/main/imaging/captions.ts')
+  const state = defaults()
+  state.caption.style = 'studio'
+  state.caption.title = 'First title'
+  state.caption.copyright = 'Photographer'
+  state.caption.showExif = true
+  state.caption.fields = ['camera', 'iso']
+  const photo = {
+    id: 'line-photo',
+    name: 'photo',
+    width: 300,
+    height: 200,
+    exif: { camera: 'Camera model with a long name', iso: 'ISO 200' },
+  }
+  const assets = new Map([[photo.id, photo]])
+  const render = (width = 600, scale = 1, preview = true) =>
+    createCaptionRenderer(
+      state,
+      assets,
+      resolve('resources'),
+      preview,
+    )(photo.id, width, scale)
+  const first = await render()
+  assert.equal(first.pieces.length, 4)
+  state.caption.title = 'Another title'
+  const edited = await render()
+  assert.notEqual(edited.pieces[0].input, first.pieces[0].input)
+  for (let i = 1; i < first.pieces.length; i++) {
+    assert.equal(
+      edited.pieces[i].input,
+      first.pieces[i].input,
+      'unchanged line reuses its buffer',
+    )
+  }
+  const narrow = await render(120)
+  assert.notDeepEqual(narrow.pieces[1].input, edited.pieces[1].input)
+  const larger = await render(600, 2)
+  assert.notDeepEqual(larger.pieces[1].input, edited.pieces[1].input)
+  state.mat = '#101010'
+  const dark = await render()
+  assert.notDeepEqual(dark.pieces[1].input, edited.pieces[1].input)
+  state.caption.style = 'retro'
+  const retro = await render()
+  assert.notDeepEqual(retro.pieces[0].input, dark.pieces[1].input)
+  const working = await render(600, 1, false)
+  assert.equal(
+    (await sharp(working.pieces[0].input).metadata()).depth,
+    'ushort',
+  )
+  assert.equal((await sharp(retro.pieces[0].input).metadata()).format, 'png')
+  for (const result of [first, edited, narrow, larger, dark, retro, working]) {
+    for (const piece of result.pieces) {
+      const info = await sharp(piece.input).metadata()
+      assert.equal(piece.width, info.width)
+      assert.equal(piece.height, info.height)
+    }
+  }
+})

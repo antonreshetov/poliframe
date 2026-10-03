@@ -8,6 +8,7 @@ import type {
   Rect,
   Transform,
 } from '../../shared/contracts'
+import { createHash } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import sharp from 'sharp'
 import { calculateLayout, effectiveSize } from '../../shared/layout'
@@ -37,26 +38,20 @@ export async function transformImage(
     ? openImage(previewSource)
     : await toWorkingPipeline(asset.path)
   let source = (await sharp(previewSource ?? asset.path).metadata()).autoOrient
-  if (transform.rotation % 360) {
-    const normalized = await pipeline.toBuffer()
-    const data = await openImage(normalized)
+  if (transform.rotation % 360 || transform.flipX || transform.flipY) {
+    // Sharp applies flips before rotation. Swap their axes for quarter turns
+    // to preserve the editor's rotate-then-flip transform in one materialization.
+    const swap = transform.rotation % 180 !== 0
+    const data = await pipeline
       .rotate(transform.rotation)
+      .flop(swap ? transform.flipY : transform.flipX)
+      .flip(swap ? transform.flipX : transform.flipY)
       .toColourspace('rgb16')
       .withIccProfile('p3')
-      .tiff({ compression: 'lzw' })
+      .tiff({ compression: 'none' })
       .toBuffer()
     pipeline = openImage(data)
     source = (await sharp(data).metadata()).autoOrient
-  }
-  if (transform.flipX || transform.flipY) {
-    const data = await pipeline
-      .flop(transform.flipX)
-      .flip(transform.flipY)
-      .toColourspace('rgb16')
-      .withIccProfile('p3')
-      .tiff({ compression: 'lzw' })
-      .toBuffer()
-    pipeline = openImage(data)
   }
   const crop = transform.crop
   const left = Math.min(source.width - 1, Math.round(crop.x * source.width))
@@ -90,6 +85,20 @@ export async function transformImage(
     .toBuffer()
 }
 
+/** Required source long edge for cover after rotation/crop, with rounding headroom. */
+export function previewSourceSize(
+  asset: Pick<Photo, 'width' | 'height'>,
+  transform: Transform,
+  width: number,
+  height: number,
+): number {
+  const effective = effectiveSize(asset, transform)
+  return Math.ceil(
+    Math.max(asset.width, asset.height)
+    * Math.max((width + 2) / effective.width, (height + 2) / effective.height),
+  )
+}
+
 async function previewTile(
   asset: ImageAsset,
   transform: Transform,
@@ -105,7 +114,8 @@ async function previewTile(
     info.mtimeMs,
     info.ctimeMs,
   ])
-  const bucket = sourceSize > 4096 ? 0 : sourceSize <= 2200 ? 2200 : 4096
+  const bucket
+    = [512, 1024, 2200, 4096].find(size => size >= sourceSize) ?? 0
   const key = JSON.stringify([
     identity,
     transform,
@@ -132,13 +142,7 @@ async function previewTile(
   })
 }
 
-const gestureCache = new PreviewCache(24 * 1024 * 1024)
-/** Native gridLeafGestureImages equivalent: transformed photo, before cell cover-crop. */
-export async function gestureImages(
-  snapshot: Composition,
-  assets: ImageAsset[],
-): Promise<NonNullable<PreviewResult['gestureImages']>> {
-  const result: NonNullable<PreviewResult['gestureImages']> = []
+function visiblePanels(snapshot: Composition) {
   const visible = new Set<string>()
   const visit = (node: Composition['grid']) => {
     if (node.type === 'leaf') {
@@ -152,9 +156,60 @@ export async function gestureImages(
   if (snapshot.layout === 'grid')
     visit(snapshot.grid)
   else snapshot.panels.forEach(panel => visible.add(panel.photoId))
-  for (const panel of snapshot.panels) {
-    if (!visible.has(panel.photoId))
-      continue
+  return snapshot.panels.filter(panel => visible.has(panel.photoId))
+}
+
+/** Stateless content identity: a worker restart never invalidates an acknowledged payload. */
+export async function gesturePreview(
+  snapshot: Composition,
+  assets: ImageAsset[],
+  knownGestureImagesKey?: string,
+): Promise<Pick<PreviewResult, 'gestureImages' | 'gestureImagesKey'>> {
+  const identities = await Promise.all(
+    visiblePanels(snapshot).map(async (panel) => {
+      const asset = assets.find(item => item.id === panel.photoId)
+      if (!asset)
+        throw new Error(`Grid image is unavailable: ${panel.photoId}`)
+      const info = await stat(asset.path)
+      const { rotation, flipX, flipY, crop } = panel.transform
+      return [
+        panel.photoId,
+        asset.path,
+        asset.width,
+        asset.height,
+        info.size,
+        info.mtimeMs,
+        info.ctimeMs,
+        rotation,
+        flipX,
+        flipY,
+        crop.x,
+        crop.y,
+        crop.width,
+        crop.height,
+      ]
+    }),
+  )
+  const gestureImagesKey = createHash('sha256')
+    .update(JSON.stringify(identities))
+    .digest('hex')
+  return {
+    gestureImagesKey,
+    gestureImages:
+      gestureImagesKey === knownGestureImagesKey
+        ? undefined
+        : await gestureImages(snapshot, assets),
+  }
+}
+
+const gestureCache = new PreviewCache(24 * 1024 * 1024)
+/** Native gridLeafGestureImages equivalent: transformed photo, before cell cover-crop. */
+export async function gestureImages(
+  snapshot: Composition,
+  assets: ImageAsset[],
+): Promise<NonNullable<PreviewResult['gestureImages']>> {
+  const result: NonNullable<PreviewResult['gestureImages']> = []
+  for (const panel of visiblePanels(snapshot)) {
     const asset = assets.find(item => item.id === panel.photoId)
     if (!asset)
       continue
@@ -347,13 +402,9 @@ export async function compose(
       )
     let input: Buffer
     if (maxSize !== undefined) {
-      const crop = panel.transform.crop
       const sourceSize = region
         ? Infinity
-        : Math.max(
-            2200,
-            Math.ceil(maxSize / Math.min(crop.width, crop.height)),
-          )
+        : previewSourceSize(asset, panel.transform, cellWidth, cellHeight)
       input = await previewTile(
         asset,
         panel.transform,
@@ -396,14 +447,13 @@ export async function compose(
       cap.scale,
     )
     for (const piece of text.pieces) {
-      const info = await sharp(piece.input).metadata()
       const input
         = factor === 1
           ? piece.input
           : await sharp(piece.input)
               .resize(
-                Math.max(1, Math.round(info.width * factor)),
-                Math.max(1, Math.round(info.height * factor)),
+                Math.max(1, Math.round(piece.width * factor)),
+                Math.max(1, Math.round(piece.height * factor)),
                 { fit: 'fill' },
               )
               .toColourspace('rgb16')

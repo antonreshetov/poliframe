@@ -5,7 +5,7 @@ import { stat } from 'node:fs/promises'
 import sharp from 'sharp'
 import { calculateLayout } from '../../shared/layout'
 import { createCaptionRenderer } from './captions'
-import { gestureImages } from './composition'
+import { gesturePreview } from './composition'
 import { openImage } from './index'
 import { PreviewCache } from './preview-cache'
 
@@ -21,6 +21,7 @@ export async function annotationPreview(
   assets: ImageAsset[],
   resources: string,
   maxSize: number,
+  knownGestureImagesKey?: string,
 ): Promise<PreviewResult> {
   const captions = createCaptionRenderer(
     snapshot,
@@ -42,14 +43,13 @@ export async function annotationPreview(
       cap.scale,
     )
     for (const piece of text.pieces) {
-      const info = await sharp(piece.input).metadata()
       const rasterFactor = Math.min(1, Math.ceil(factor * 16) / 16)
       let pixels = captionPreviewPixels.get(piece.input)
       if (!pixels || pixels.factor !== rasterFactor) {
         const data = await sharp(piece.input)
           .resize(
-            Math.max(1, Math.round(info.width! * rasterFactor)),
-            Math.max(1, Math.round(info.height! * rasterFactor)),
+            Math.max(1, Math.round(piece.width * rasterFactor)),
+            Math.max(1, Math.round(piece.height * rasterFactor)),
             { fit: 'fill' },
           )
           .withIccProfile('srgb')
@@ -65,8 +65,8 @@ export async function annotationPreview(
       annotationLayers.push({
         x: cap.x + cap.paddingX + piece.x,
         y: cap.y + cap.paddingTop + piece.y,
-        width: info.width!,
-        height: info.height!,
+        width: piece.width,
+        height: piece.height,
         dataUrl: pixels.dataUrl,
       })
     }
@@ -128,6 +128,6 @@ export async function annotationPreview(
     layout,
     dataUrl: '',
     annotationLayers,
-    gestureImages: await gestureImages(snapshot, assets),
+    ...(await gesturePreview(snapshot, assets, knownGestureImagesKey)),
   }
 }

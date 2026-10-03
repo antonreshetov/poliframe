@@ -869,3 +869,90 @@ it('print badge calculates paper DPI instead of exposing stale export metadata',
   }
   assert.equal(printInfo.value.dpi, 400)
 })
+
+it('gesture acknowledgment advances only after successful publication and reuses published pixels', async (t) => {
+  const { editor, api, window } = setup(t)
+  const render = api.preview
+  const keys = []
+  let contentKey = 'a'.repeat(64)
+  api.preview = async (snapshot, size, region, annotations, knownKey) => {
+    keys.push(knownKey)
+    return {
+      ...(await render(snapshot)),
+      gestureImagesKey: contentKey,
+      gestureImages:
+        knownKey === contentKey
+          ? undefined
+          : [
+              {
+                photoId: 'photo-1',
+                width: 100,
+                height: 100,
+                dataUrl: `data:,${contentKey}`,
+              },
+            ],
+    }
+  }
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 60))
+  const published = editor.preview
+  assert.equal(published.gestureImagesKey, contentKey)
+  editor.state.mat = '#111111'
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(keys.at(-1), contentKey)
+  assert.deepEqual(editor.preview.gestureImages, published.gestureImages)
+  window.Image = class {
+    decode() {
+      return Promise.reject(new Error('decode failed'))
+    }
+  }
+  contentKey = 'b'.repeat(64)
+  editor.state.mat = '#222222'
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(editor.preview.gestureImagesKey, 'a'.repeat(64))
+  window.Image = class {
+    decode() {
+      return Promise.resolve()
+    }
+  }
+  editor.state.mat = '#333333'
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(
+    keys.at(-1),
+    'a'.repeat(64),
+    'failed decode is never acknowledged',
+  )
+  assert.equal(editor.preview.gestureImagesKey, contentKey)
+  assert.equal(editor.preview.gestureImages[0].dataUrl, `data:,${contentKey}`)
+  let finishDecode
+  window.Image = class {
+    decode() {
+      return new Promise((resolve) => {
+        finishDecode = resolve
+      })
+    }
+  }
+  contentKey = 'c'.repeat(64)
+  editor.state.mat = '#444444'
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(typeof finishDecode, 'function')
+  editor.beginSpacing()
+  editor.state.percent.frame = 12
+  await new Promise(resolve => setTimeout(resolve, 20))
+  finishDecode()
+  await flush()
+  assert.equal(
+    editor.preview.gestureImagesKey,
+    'b'.repeat(64),
+    'stale decoded pixels are never acknowledged',
+  )
+  window.Image = class {
+    decode() {
+      return Promise.resolve()
+    }
+  }
+  editor.endSpacing()
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(keys.at(-1), 'b'.repeat(64))
+  assert.equal(editor.preview.gestureImagesKey, contentKey)
+})

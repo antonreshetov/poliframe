@@ -4,7 +4,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { parentPort } from 'node:worker_threads'
 import { annotationPreview } from './annotations'
-import { compose, gestureImages } from './composition'
+import { compose, gesturePreview } from './composition'
 import { exportImage } from './index'
 
 parentPort!.on(
@@ -18,6 +18,7 @@ parentPort!.on(
     region?: Rect
     maxSize?: number
     annotationsOnly?: boolean
+    knownGestureImagesKey?: string
     destination?: string
   }) => {
     try {
@@ -27,6 +28,7 @@ parentPort!.on(
           job.assets,
           job.resources,
           job.maxSize ?? 2200,
+          job.knownGestureImagesKey,
         )
         parentPort!.postMessage({ id: job.id, result })
         return
@@ -58,9 +60,13 @@ parentPort!.on(
           result: {
             revision: job.snapshot.revision,
             region: job.region,
-            gestureImages: job.region
-              ? undefined
-              : await gestureImages(job.snapshot, job.assets),
+            ...(job.region
+              ? {}
+              : await gesturePreview(
+                  job.snapshot,
+                  job.assets,
+                  job.knownGestureImagesKey,
+                )),
             dataUrl: `data:image/jpeg;base64,${data.toString('base64')}`,
             layout,
           },

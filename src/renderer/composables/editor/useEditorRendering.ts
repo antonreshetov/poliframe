@@ -123,14 +123,26 @@ export function useEditorRendering({
           try {
             const snapshot = clone(state.value)
             snapshot.revision = revision
+            const publishedPreview = preview.value
             const result = await window.poliframe.preview(
               snapshot,
               previewSize.value,
               undefined,
               annotationMode,
+              publishedPreview?.gestureImagesKey,
             )
             if (!canPublish())
               return
+            if (result.gestureImages === undefined && result.gestureImagesKey) {
+              if (
+                result.gestureImagesKey
+                !== publishedPreview?.gestureImagesKey
+                || !publishedPreview.gestureImages
+              ) {
+                throw new Error('Gesture preview images are unavailable')
+              }
+              result.gestureImages = publishedPreview.gestureImages
+            }
             // Decode before publishing: replacing the live layers must not expose
             // an undecoded image or make the first drag pay for photo decoding.
             if (typeof window.Image === 'function') {
