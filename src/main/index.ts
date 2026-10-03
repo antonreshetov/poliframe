@@ -131,7 +131,7 @@ app.whenReady().then(async () => {
   if (isDev && app.dock) {
     app.dock.setIcon(
       nativeImage.createFromPath(
-        path.join(__dirname, '../../build/icons/icon.png'),
+        path.join(__dirname, '../../build/icons/icon-mac.png'),
       ),
     )
   }
