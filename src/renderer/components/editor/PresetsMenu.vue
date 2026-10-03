@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bookmark, Check, LockKeyhole } from '@lucide/vue'
+import { Bookmark } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import {
@@ -15,6 +15,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -59,28 +61,34 @@ async function apply() {
     >
       <DropdownMenuLabel>Presets</DropdownMenuLabel>
       <DropdownMenuSeparator />
-      <DropdownMenuItem @select="e.applyPreset('defaults')">
-        <Check v-if="e.activePreset === 'defaults'" />Defaults
-      </DropdownMenuItem>
-      <DropdownMenuItem @select="e.applyPreset('builtin')">
-        <Check v-if="e.activePreset === 'builtin'" /><span
-          class="min-w-0 truncate"
-        >Passe-partout + Caption</span><LockKeyhole
-          class="ml-auto size-3 shrink-0 text-muted-foreground"
-          :stroke-width="1.75"
-        />
-      </DropdownMenuItem>
-      <DropdownMenuSeparator v-if="e.presets.length" />
-      <DropdownMenuItem
-        v-for="preset in e.presets"
-        :key="preset.id"
-        @select="e.applyPreset(preset.id)"
-      >
-        <Check v-if="e.activePreset === preset.id" /><span
-          class="min-w-0 truncate"
-          :title="preset.name"
-        >{{ preset.name }}</span>
-      </DropdownMenuItem>
+      <DropdownMenuRadioGroup :model-value="e.activePreset">
+        <DropdownMenuRadioItem
+          value="defaults"
+          @select="e.applyPreset('defaults')"
+        >
+          Defaults
+        </DropdownMenuRadioItem>
+        <DropdownMenuRadioItem
+          value="builtin"
+          @select="e.applyPreset('builtin')"
+        >
+          <span class="min-w-0 truncate">Passe-partout + Caption</span>
+        </DropdownMenuRadioItem>
+        <DropdownMenuSeparator v-if="e.presets.length" />
+        <DropdownMenuRadioItem
+          v-for="preset in e.presets"
+          :key="preset.id"
+          :value="preset.id"
+          @select="e.applyPreset(preset.id)"
+        >
+          <span
+            class="min-w-0 truncate"
+            :title="preset.name"
+          >{{
+            preset.name
+          }}</span>
+        </DropdownMenuRadioItem>
+      </DropdownMenuRadioGroup>
       <template v-if="active">
         <DropdownMenuSeparator />
         <DropdownMenuItem @select="e.savePreset(active.name, active.id)">
