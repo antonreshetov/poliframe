@@ -1,15 +1,7 @@
 <script setup lang="ts">
 import type { GridNode } from '../../../shared/contracts'
-import {
-  CircleCheck,
-  CircleX,
-  Crop,
-  ImagePlus,
-  TriangleAlert,
-} from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   SegmentedControl as ToggleGroup,
   SegmentedControlItem as ToggleGroupItem,
@@ -19,72 +11,11 @@ import { gridTemplate, matColors } from '../../../shared/defaults'
 import { gridCells } from '../../../shared/layout'
 import CheckField from './CheckField.vue'
 import ChoiceField from './ChoiceField.vue'
+import PhotoList from './compose/PhotoList.vue'
+import PrintSettings from './compose/PrintSettings.vue'
 import NumberField from './NumberField.vue'
 
 const e = useEditorContext()
-const dragging = ref('')
-const dragOrder = ref<string[] | null>(null)
-let dragSlots: { top: number, bottom: number }[] = []
-const displayedPanels = computed(() =>
-  dragOrder.value
-    ? dragOrder.value
-        .map(id => e.state.panels.find(panel => panel.photoId === id)!)
-        .filter(Boolean)
-    : e.state.panels,
-)
-function startPanelDrag(event: DragEvent, id: string) {
-  const list = (event.currentTarget as HTMLElement).parentElement!
-  dragSlots = Array.from(list.querySelectorAll<HTMLElement>('.photo-row')).map(
-    row => ({
-      top: row.offsetTop,
-      bottom: row.offsetTop + row.offsetHeight,
-    }),
-  )
-  dragging.value = id
-  dragOrder.value = e.state.panels.map(panel => panel.photoId)
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', id)
-  }
-}
-function movePanelDrag(event: DragEvent) {
-  if (!dragOrder.value || !dragging.value)
-    return
-  const list = event.currentTarget as HTMLElement
-  const y = event.clientY - list.getBoundingClientRect().top
-  const from = dragOrder.value.indexOf(dragging.value)
-  const current = dragSlots[from]
-  if (!current)
-    return
-  // Keep a small dead zone around the current slot so boundary jitter cannot reverse a move.
-  if (y >= current.top - 4 && y <= current.bottom + 4)
-    return
-  const target = dragSlots.findIndex(
-    slot => y >= slot.top && y <= slot.bottom,
-  )
-  if (target < 0 || from === target)
-    return
-  const next = [...dragOrder.value]
-  next.splice(target, 0, next.splice(from, 1)[0]!)
-  dragOrder.value = next
-}
-function endPanelDrag() {
-  dragging.value = ''
-  dragOrder.value = null
-  dragSlots = []
-}
-function dropPanel(event: DragEvent, id: string) {
-  if (dragging.value && dragOrder.value) {
-    const index = dragOrder.value.indexOf(dragging.value)
-    const target = e.state.panels[index]?.photoId
-    if (target)
-      e.reorder(dragging.value, target)
-  }
-  else {
-    e.drop(event, id)
-  }
-  endPanelDrag()
-}
 const measure = computed(() => e.state[e.state.units])
 const suffix = computed(() => (e.state.units === 'percent' ? '%' : 'px'))
 const thumbnailSize = computed(() => {
@@ -116,10 +47,6 @@ function setUnits(value: unknown) {
   if (value === 'percent' || value === 'pixels')
     e.state.units = value
 }
-function paperDimension(value: string | number) {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? Math.max(0.01, Math.min(1000, numeric)) : 1
-}
 function separate() {
   if (e.state.separateFrame) {
     for (const unit of ['percent', 'pixels'] as const) {
@@ -127,72 +54,6 @@ function separate() {
         e.state[unit][edge] = e.state[unit].frame
     }
   }
-}
-const paperFormats = [
-  ...[
-    [10, 15],
-    [13, 18],
-    [15, 21],
-    [20, 30],
-    [30, 40],
-    [40, 50],
-    [40, 60],
-    [50, 70],
-    [60, 90],
-  ].map(([width, height]) => ({
-    name: `${width} × ${height} cm`,
-    width: width!,
-    height: height!,
-    units: 'cm' as const,
-    group: 'Photo (cm)',
-  })),
-  ...[
-    [4, 6],
-    [5, 7],
-    [8, 10],
-    [11, 14],
-    [16, 20],
-  ].map(([width, height]) => ({
-    name: `${width} × ${height} in`,
-    width: width!,
-    height: height!,
-    units: 'in' as const,
-    group: 'Photo (inch)',
-  })),
-  { name: 'A4', width: 21, height: 29.7, units: 'cm' as const, group: 'Paper' },
-  { name: 'A3', width: 29.7, height: 42, units: 'cm' as const, group: 'Paper' },
-  { name: 'A2', width: 42, height: 59.4, units: 'cm' as const, group: 'Paper' },
-  {
-    name: 'US Letter',
-    width: 8.5,
-    height: 11,
-    units: 'in' as const,
-    group: 'Paper',
-  },
-]
-const paperOptions = [
-  ...paperFormats.map(format => ({
-    value: format.name,
-    label: format.name,
-    group: format.group,
-  })),
-  { value: 'Custom', label: 'Custom…', group: '' },
-]
-function paper(value: string) {
-  const format = paperFormats.find(format => format.name === value)
-  if (format) {
-    e.state.print.width = format.width
-    e.state.print.height = format.height
-    e.state.print.units = format.units
-  }
-}
-function orientation(value: unknown) {
-  if (value === 'auto' || value === 'portrait' || value === 'landscape')
-    e.state.print.orientation = value
-}
-function fit(value: unknown) {
-  if (value === 'fit' || value === 'fill')
-    e.state.print.fit = value
 }
 function gridSignature(node: GridNode): string {
   if (node.type === 'leaf')
@@ -223,97 +84,7 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
 
 <template>
   <div class="space-y-3">
-    <section class="space-y-2">
-      <div class="flex justify-between text-sm">
-        <h2 class="text-base font-semibold">
-          Images
-        </h2>
-        <span
-          class="self-center text-[11px]"
-          :class="
-            e.state.panels.length > e.capacity
-              ? 'text-orange-500'
-              : 'text-muted-foreground'
-          "
-        >{{ e.state.panels.length }}/{{ e.capacity }}</span>
-      </div>
-      <TransitionGroup
-        name="photo-reorder"
-        tag="div"
-        class="relative space-y-1"
-        @dragover.prevent="movePanelDrag"
-      >
-        <div
-          v-for="(panel, i) in displayedPanels"
-          :key="panel.photoId"
-          class="photo-row flex items-center gap-2 rounded-md bg-card p-1"
-          :class="{ 'is-dragging': dragging === panel.photoId }"
-          draggable="true"
-          @dragstart="startPanelDrag($event, panel.photoId)"
-          @dragover.prevent
-          @drop.stop.prevent="dropPanel($event, panel.photoId)"
-          @dragend="endPanelDrag"
-        >
-          <button
-            class="relative shrink-0"
-            :aria-label="`Replace image ${i + 1}`"
-            title="Replace image"
-            @click="e.add(undefined, panel.photoId)"
-          >
-            <img
-              :src="e.photos[panel.photoId]?.thumbnail"
-              class="h-10 w-10 rounded object-cover"
-              alt=""
-              draggable="false"
-            ><span
-              v-if="
-                panel.transform.rotation
-                  || panel.transform.flipX
-                  || panel.transform.flipY
-                  || panel.transform.crop.width < 1
-                  || panel.transform.crop.height < 1
-              "
-              class="absolute bottom-0 right-0 rounded-full bg-primary p-0.5 text-primary-foreground"
-            ><Crop :size="10" /></span>
-          </button>
-          <div class="min-w-0 flex-1">
-            <p class="text-xs text-muted-foreground">
-              {{ i + 1 }}
-            </p>
-            <p class="truncate text-xs">
-              {{ e.photos[panel.photoId]?.name }}
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            :aria-label="`Crop image ${i + 1}`"
-            title="Crop & rotate"
-            @click="e.cropId = panel.photoId"
-          >
-            <Crop />
-          </Button><Button
-            variant="ghost"
-            size="icon-xs"
-            :aria-label="`Remove image ${i + 1}`"
-            @click="e.remove(panel.photoId)"
-          >
-            <CircleX class="remove-photo-icon" />
-          </Button>
-        </div>
-      </TransitionGroup>
-      <Button
-        v-if="e.state.panels.length < e.capacity"
-        variant="ghost"
-        class="add-image-zone"
-        :disabled="e.importing"
-        @click="e.add()"
-        @dragover.prevent
-        @drop.prevent="e.drop($event)"
-      >
-        <ImagePlus />{{ e.importing ? "Importing…" : "Add image" }}
-      </Button>
-    </section>
+    <PhotoList />
     <section class="space-y-3 border-t pt-3">
       <div class="flex items-center justify-between gap-2">
         <h2 class="text-[13px]">
@@ -471,124 +242,6 @@ const customCells = computed(() => thumbnailCells(e.state.grid))
         </div>
       </div>
     </section>
-    <section class="space-y-3 border-t pt-3">
-      <CheckField
-        v-model="e.state.print.enabled"
-        label="Print layout"
-      />
-      <template v-if="e.state.print.enabled">
-        <ChoiceField
-          v-model="e.state.print.paper"
-          label="Paper"
-          :options="paperOptions"
-          @update:model-value="paper"
-        />
-        <div
-          v-if="e.state.print.paper === 'Custom'"
-          class="flex items-center gap-1.5"
-        >
-          <div class="w-16">
-            <Input
-              :model-value="e.state.print.width"
-              type="number"
-              min=".01"
-              max="1000"
-              step=".01"
-              aria-label="Paper width"
-              @update:model-value="e.state.print.width = paperDimension($event)"
-            />
-          </div>
-          <span class="text-xs text-muted-foreground">×</span>
-          <div class="w-16">
-            <Input
-              :model-value="e.state.print.height"
-              type="number"
-              min=".01"
-              max="1000"
-              step=".01"
-              aria-label="Paper height"
-              @update:model-value="
-                e.state.print.height = paperDimension($event)
-              "
-            />
-          </div>
-          <ChoiceField
-            v-model="e.state.print.units"
-            label=""
-            aria-label="Paper units"
-            :options="['cm', 'mm', 'in']"
-          />
-        </div>
-        <div class="relative space-y-1">
-          <h3 class="text-xs">
-            Orientation
-          </h3>
-          <ToggleGroup
-            orientation="horizontal"
-            :model-value="e.state.print.orientation"
-            type="single"
-            @update:model-value="orientation"
-          >
-            <ToggleGroupItem value="auto">
-              Auto
-            </ToggleGroupItem><ToggleGroupItem value="portrait">
-              Portrait
-            </ToggleGroupItem><ToggleGroupItem value="landscape">
-              Landscape
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-        <ToggleGroup
-          orientation="horizontal"
-          :model-value="e.state.layout === 'grid' ? 'fit' : e.state.print.fit"
-          type="single"
-          :disabled="!e.state.panels.length || e.state.layout === 'grid'"
-          aria-label="Print fit"
-          @update:model-value="fit"
-        >
-          <ToggleGroupItem value="fit">
-            Fit
-          </ToggleGroupItem><ToggleGroupItem value="fill">
-            Fill
-          </ToggleGroupItem>
-        </ToggleGroup>
-        <div
-          v-if="e.preview && e.state.panels.length"
-          class="space-y-0.5 text-xs"
-        >
-          <p
-            class="flex items-center gap-1"
-            :class="
-              e.preview.layout.dpi < 150 ? 'text-orange-500' : 'text-green-500'
-            "
-          >
-            <component
-              :is="e.preview.layout.dpi < 150 ? TriangleAlert : CircleCheck"
-              :size="12"
-            />{{
-              e.preview.layout.dpi < 150
-                ? "Low quality"
-                : e.preview.layout.dpi < 300
-                  ? "Good quality"
-                  : "Excellent quality"
-            }}
-          </p>
-          <p class="tabular-nums text-muted-foreground">
-            {{ e.state.print.width }} × {{ e.state.print.height }}
-            {{ e.state.print.units }} ·
-            {{ Math.round(e.preview.layout.dpi) }} dpi
-          </p>
-        </div>
-      </template>
-    </section>
+    <PrintSettings />
   </div>
 </template>
-
-<style scoped>
-.photo-row.is-dragging {
-  opacity: 0.18;
-}
-.photo-reorder-move {
-  transition: transform 140ms ease-in-out;
-}
-</style>

@@ -4,8 +4,10 @@ const { mkdtemp, readFile, rm } = require('node:fs/promises')
 const os = require('node:os')
 const path = require('node:path')
 const { test } = require('node:test')
-const { PresetStore } = require('../build/main/services/presets.js')
-const { defaults, identityTransform } = require('../build/shared/defaults.js')
+
+const build = process.env.POLIFRAME_TEST_BUILD || path.resolve('build')
+const { PresetStore } = require(path.join(build, 'main/services/presets.js'))
+const { defaults, identityTransform } = require(path.join(build, 'shared/defaults.js'))
 
 test('presets exclude photographs, source selection, revision and print settings', async () => {
   const directory = await mkdtemp(

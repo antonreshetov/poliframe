@@ -3,7 +3,8 @@ import type { Asset } from '../services/assets'
 import path from 'node:path'
 import process from 'node:process'
 import { parentPort } from 'node:worker_threads'
-import { annotationPreview, compose, gestureImages } from './composition'
+import { annotationPreview } from './annotations'
+import { compose, gestureImages } from './composition'
 import { exportImage } from './index'
 
 parentPort!.on(
