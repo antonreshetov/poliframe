@@ -1,15 +1,30 @@
 <script setup lang="ts">
 import { CircleCheck, TriangleAlert } from '@lucide/vue'
+import { computed } from 'vue'
 import { Input } from '@/components/ui/input'
 import {
   SegmentedControl as ToggleGroup,
   SegmentedControlItem as ToggleGroupItem,
 } from '@/components/ui/segmented-control'
 import { useEditorContext } from '@/composables/useEditor'
+import { paperSize } from '../../../../shared/layout'
 import CheckField from '../CheckField.vue'
 import ChoiceField from '../ChoiceField.vue'
 
 const e = useEditorContext()
+const printInfo = computed(() => {
+  const layout = e.interactivePreview?.layout ?? e.preview?.layout
+  if (!e.state.print.enabled || !e.state.panels.length || !layout)
+    return null
+  const paper = paperSize(e.state, layout.nativeWidth >= layout.nativeHeight)
+  const units = e.state.print.units
+  const factor = units === 'in' ? 1 : units === 'mm' ? 25.4 : 2.54
+  return {
+    dpi: Math.max(1, Math.round(layout.width / paper.width)),
+    width: Number((paper.width * factor).toFixed(2)),
+    height: Number((paper.height * factor).toFixed(2)),
+  }
+})
 function paperDimension(value: string | number) {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? Math.max(0.01, Math.min(1000, numeric)) : 1
@@ -163,29 +178,27 @@ function fit(value: unknown) {
         </ToggleGroupItem>
       </ToggleGroup>
       <div
-        v-if="e.preview && e.state.panels.length"
+        v-if="printInfo"
         class="space-y-0.5 text-xs"
       >
         <p
           class="flex items-center gap-1"
-          :class="
-            e.preview.layout.dpi < 150 ? 'text-orange-500' : 'text-green-500'
-          "
+          :class="printInfo.dpi < 150 ? 'text-orange-500' : 'text-green-500'"
         >
           <component
-            :is="e.preview.layout.dpi < 150 ? TriangleAlert : CircleCheck"
+            :is="printInfo.dpi < 150 ? TriangleAlert : CircleCheck"
             :size="12"
           />{{
-            e.preview.layout.dpi < 150
+            printInfo.dpi < 150
               ? "Low quality"
-              : e.preview.layout.dpi < 300
+              : printInfo.dpi < 240
                 ? "Good quality"
                 : "Excellent quality"
           }}
         </p>
         <p class="tabular-nums text-muted-foreground">
-          {{ e.state.print.width }} × {{ e.state.print.height }}
-          {{ e.state.print.units }} · {{ Math.round(e.preview.layout.dpi) }} dpi
+          {{ printInfo.width }} × {{ printInfo.height }}
+          {{ e.state.print.units }} · {{ Math.round(printInfo.dpi) }} dpi
         </p>
       </div>
     </template>
