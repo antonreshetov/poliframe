@@ -895,3 +895,40 @@ test('export cancellation is silent and successful exports use Sonner', async (t
   editor.fail(new Error('Render failed'))
   assert.equal(notifications.at(-1).options.id, notifications.at(-2).options.id)
 })
+
+test('print badge calculates paper DPI instead of exposing stale export metadata', () => {
+  const { descriptor } = parse(source('src/renderer/components/editor/compose/PrintSettings.vue'))
+  const compiled = compileScript(descriptor, { id: 'print-dpi' })
+  const editor = vue.reactive({
+    state: defaultsModule.defaults(),
+    preview: { layout: { width: 3000, height: 2000, nativeWidth: 3000, nativeHeight: 2000, dpi: 72 } },
+    interactivePreview: null,
+  })
+  editor.state.panels = [{ photoId: 'photo' }]
+  editor.state.print.width = 10
+  editor.state.print.height = 15
+  editor.state.print.units = 'in'
+  editor.state.print.orientation = 'auto'
+  const component = evaluate(compiled.content, {
+    '@lucide/vue': {},
+    '@/components/ui/input': {},
+    '@/components/ui/segmented-control': {},
+    '@/composables/useEditor': { useEditorContext: () => editor },
+    '../../../../shared/layout': evaluate(source('src/shared/layout.ts')),
+    '../CheckField.vue': {},
+    '../ChoiceField.vue': {},
+  }).default
+  const { printInfo } = component.setup({}, { expose() {} })
+  assert.equal(printInfo.value, null)
+  editor.state.print.enabled = true
+  assert.equal(printInfo.value.dpi, 200)
+  assert.equal(printInfo.value.width, 15)
+  assert.equal(printInfo.value.height, 10)
+  editor.preview.layout.dpi = 240
+  assert.equal(printInfo.value.dpi, 200)
+  editor.state.print.width = 5
+  editor.state.print.height = 10
+  assert.equal(printInfo.value.dpi, 300)
+  editor.interactivePreview = { layout: { ...editor.preview.layout, width: 4000 } }
+  assert.equal(printInfo.value.dpi, 400)
+})

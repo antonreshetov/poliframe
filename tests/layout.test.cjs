@@ -117,7 +117,7 @@ test('recursive grid weights, holes and caption stay within chosen aspect', asyn
   )
 })
 
-test('print Fit keeps native paper canvas while Fill and Grid use paper DPI', async () => {
+test('print Fit and Fill retain source resolution while Grid uses paper DPI', async () => {
   const large = assets.map(p => ({ ...p, width: 6000, height: 4000 }))
   const s = state(large)
   s.print.enabled = true
@@ -130,14 +130,14 @@ test('print Fit keeps native paper canvas while Fill and Grid use paper DPI', as
   assert.ok(fit.dpi > 300)
   s.print.fit = 'fill'
   const fill = await calculateLayout(s, large)
-  assert.equal(fill.width, 4724)
-  assert.equal(fill.height, 3543)
-  assert.equal(fill.dpi, 300)
+  assert.equal(fill.width, 5333)
+  assert.equal(fill.height, 4000)
+  assert.equal(fill.dpi, 339)
   s.layout = 'grid'
   s.grid = gridTemplate('1x2', ['0', '1'])
   const grid = await calculateLayout(s, large)
-  assert.equal(grid.width, fill.width)
-  assert.equal(grid.height, fill.height)
+  assert.equal(grid.width, 4724)
+  assert.equal(grid.height, 3543)
 })
 
 test('caption height changes native output and preview returns full geometry', async () => {
@@ -395,4 +395,26 @@ test('preview cache invalidates when an imported file changes on disk', async ()
   const second = await compose(s, [photo], resources, 100)
   const blue = await second.pipeline.raw().toBuffer()
   assert.notDeepEqual(blue, red)
+})
+
+test('Fill matches native source DPI and respects explicit output sizing', async () => {
+  const photos = [{ ...assets[0], width: 7563, height: 5042 }]
+  const s = state(photos)
+  s.print.enabled = true
+  s.print.fit = 'fill'
+  s.print.orientation = 'landscape'
+  s.print.width = 15
+  s.print.height = 21
+  const full = await calculateLayout(s, photos)
+  assert.equal(full.width, 7059)
+  assert.equal(full.height, 5042)
+  assert.equal(full.dpi, 854)
+  s.output.size = '2x'
+  const doubled = await calculateLayout(s, photos)
+  assert.equal(doubled.height, 10084)
+  s.output.size = '2100w'
+  const sized = await calculateLayout(s, photos)
+  assert.equal(sized.width, 2100)
+  assert.equal(sized.height, 1500)
+  assert.equal(sized.dpi, 254)
 })

@@ -421,11 +421,8 @@ export async function calculateLayout(
   const native = await build(nativeTarget)
   const sizing = parseOutputSize(s.output.size)
   let target = nativeTarget
-  if (paper && (s.layout === 'grid' || isFill)) {
-    target
-      = s.layout === 'grid' || horizontal
-        ? paper.height * 300
-        : paper.width * 300
+  if (paper && s.layout === 'grid') {
+    target = paper.height * 300
   }
   else if (sizing.axis === 'scale') {
     target *= sizing.value
@@ -440,7 +437,7 @@ export async function calculateLayout(
       target = Math.min(nativeTarget * 4, Math.max(1, target))
     }
   }
-  target = Math.min(nativeTarget * (isFill ? 1 : 4), Math.max(1, target))
+  target = Math.min(nativeTarget * 4, Math.max(1, target))
   const result = await build(target)
   result.width = Math.max(1, Math.round(result.width))
   result.height = Math.max(1, Math.round(result.height))
