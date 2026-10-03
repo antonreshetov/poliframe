@@ -50,6 +50,7 @@ export async function annotationPreview(
           .resize(
             Math.max(1, Math.round(info.width! * rasterFactor)),
             Math.max(1, Math.round(info.height! * rasterFactor)),
+            { fit: 'fill' },
           )
           .withIccProfile('srgb')
           .toColourspace('srgb')

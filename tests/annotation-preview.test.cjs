@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict')
+const { Buffer } = require('node:buffer')
 const { mkdtemp, rm } = require('node:fs/promises')
 const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
@@ -58,9 +59,19 @@ test('layered annotation preview preserves native caption geometry for every pre
     assert.ok(layered.annotationLayers.length > 0)
     assert.equal(layered.dataUrl, '')
     assert.equal(layered.gestureImages.length, 1)
+    const full = await annotationPreview(state, [photo], resolve('resources'), 100000)
     for (const layer of layered.annotationLayers) {
       assert.ok(layer.width > 0 && layer.height > 0)
       assert.match(layer.dataUrl, /^data:image\/png;base64,/)
+      const original = full.annotationLayers[layered.annotationLayers.indexOf(layer)]
+      const pixels = Buffer.from(layer.dataUrl.split(',')[1], 'base64')
+      const info = await sharp(pixels).metadata()
+      const expected = await sharp(Buffer.from(original.dataUrl.split(',')[1], 'base64'))
+        .resize(info.width, info.height, { fit: 'fill' })
+        .extractChannel('alpha')
+        .raw()
+        .toBuffer()
+      assert.deepEqual(await sharp(pixels).extractChannel('alpha').raw().toBuffer(), expected, `${style}: scaled text preserves both edges`)
     }
   }
   state.caption.style = 'studio'

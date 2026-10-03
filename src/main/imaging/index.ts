@@ -5,6 +5,7 @@ import { access, readFile, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { ExifTool } from 'exiftool-vendored'
 import sharp from 'sharp'
+import './fonts'
 
 // The main-process caller owns file authorization and job concurrency.
 export const MAX_IMAGE_PIXELS = 100_000_000

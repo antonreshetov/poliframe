@@ -3,6 +3,7 @@ import type { CaptionStyle, Composition, Photo } from '../../shared/contracts'
 import { join } from 'node:path'
 import sharp from 'sharp'
 import { toWorkingImage } from './color'
+import { captionFonts } from './fonts'
 import { MAX_IMAGE_PIXELS } from './index'
 
 type Role = 'title' | 'camera' | 'exif' | 'copyright'
@@ -50,16 +51,6 @@ const styles: Record<CaptionStyle, Record<Role, Face>> = {
     exif: ['Montserrat-Light', 10, 0.24, true],
     copyright: ['Montserrat-Light', 9, 0.3, true],
   },
-}
-const families: Record<string, string> = {
-  Inter: 'Inter',
-  JetBrainsMono: 'JetBrains Mono',
-  MartianMono: 'Martian Mono',
-  CormorantGaramond: 'Cormorant Garamond',
-  GeistMono: 'Geist Mono',
-  PlayfairDisplay: 'Playfair Display',
-  IBMPlexMono: 'IBM Plex Mono',
-  Montserrat: 'Montserrat',
 }
 const separators: Record<CaptionStyle, string> = {
   studio: ' / ',
@@ -176,8 +167,7 @@ export function createCaptionRenderer(
           throw new Error('Caption text exceeds the render budget')
         const [face, pointSize, tracking, upper]
           = styles[s.caption.style][role]
-        const [family, weight] = face.split('-')
-        const font = `${families[family!]} ${weight!.replace('SemiBold', 'Semi-Bold').replace('Italic', ' Italic')} ${Math.max(1, pointSize * scale)}`
+        const font = `${captionFonts[face]} ${Math.max(1, pointSize * scale)}`
         const content = escape(upper ? text[role].toUpperCase() : text[role])
         const { data, info } = await sharp({
           text: {
