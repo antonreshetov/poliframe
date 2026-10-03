@@ -1,4 +1,4 @@
-import type { AppApi } from '../shared/contracts'
+import type { AppApi, AppNotification } from '../shared/contracts'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const api: AppApi = {
@@ -22,6 +22,26 @@ const api: AppApi = {
   },
   info: () => ipcRenderer.invoke('app:info'),
   checkUpdates: () => ipcRenderer.invoke('updates:check'),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
+  onNotification: (callback) => {
+    let active = true
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      notification: AppNotification,
+    ) => callback(notification)
+    ipcRenderer.on('app:notification', listener)
+    void ipcRenderer
+      .invoke('notifications:ready')
+      .then((pending: AppNotification[]) => {
+        if (active)
+          pending.forEach(callback)
+      })
+      .catch(console.error)
+    return () => {
+      active = false
+      ipcRenderer.removeListener('app:notification', listener)
+    }
+  },
   droppedFilePath: file => webUtils.getPathForFile(file),
 }
 contextBridge.exposeInMainWorld('poliframe', api)

@@ -9,6 +9,7 @@ import {
   ref,
   watch,
 } from 'vue'
+import { toast } from 'vue-sonner'
 import { defaults, identityTransform } from '../../shared/defaults'
 
 import { leaves, useEditorGrid } from './editor/useEditorGrid'
@@ -21,8 +22,6 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 export function useEditor() {
   const state = ref(defaults())
   const photos = reactive<Record<string, Photo>>({})
-  const error = ref('')
-  const status = ref('')
   const busy = ref(false)
   const importing = ref(false)
   const cropId = ref<string | null>(null)
@@ -56,7 +55,8 @@ export function useEditor() {
       ),
   )
   const fail = (e: unknown) => {
-    error.value = e instanceof Error ? e.message : String(e)
+    const message = e instanceof Error ? e.message : String(e)
+    toast.error(message, { id: 'editor-error', duration: 8000 })
   }
   const {
     presets,
@@ -140,7 +140,6 @@ export function useEditor() {
     if (importing.value)
       return
     importing.value = true
-    error.value = ''
     try {
       const wasEmpty = !state.value.panels.length
       const result = await window.poliframe.importImages(paths)
@@ -156,7 +155,7 @@ export function useEditor() {
       if (unused.length)
         await window.poliframe.releaseImages(unused.map(p => p.id))
       if (result.errors.length)
-        error.value = result.errors.join('\n')
+        fail(result.errors.join('\n'))
       for (const photo of accepted) {
         photos[photo.id] = photo
         const panel = { photoId: photo.id, transform: identityTransform() }
@@ -236,19 +235,17 @@ export function useEditor() {
     if (!canExport.value)
       return
     busy.value = true
-    error.value = ''
     try {
       const result = await window.poliframe.exportImage(clone(state.value))
-      status.value
-        = result.status === 'saved'
-          ? `Saved to ${result.path}`
-          : 'Export cancelled'
+      if (result.status === 'saved')
+        toast.success('Image exported', { description: result.path })
     }
     catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       if (/render budget|pixel budget|dimensions.*budget/i.test(message)) {
-        error.value
-          = 'This image is too large to export. Reduce its size in Export settings and try again.'
+        fail(
+          'This image is too large to export. Reduce its size in Export settings and try again.',
+        )
       }
       else {
         fail(e)
@@ -306,8 +303,6 @@ export function useEditor() {
     endSpacing,
     previewSize,
     renderRevision,
-    error,
-    status,
     busy,
     importing,
     rendering,
