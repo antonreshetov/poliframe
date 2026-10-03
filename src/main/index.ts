@@ -1,4 +1,5 @@
 import type { IpcMainInvokeEvent } from 'electron'
+import type { AppNotification } from '../shared/contracts'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -15,7 +16,7 @@ import { AssetRegistry } from './services/assets'
 import { PresetStore } from './services/presets'
 import { RenderJobs } from './services/render-jobs'
 import { createStore } from './store'
-import { checkForUpdates, initializeUpdates } from './updates'
+import { checkForUpdates, initializeUpdates, installUpdate } from './updates'
 
 const isDev = process.env.NODE_ENV === 'development'
 app.setName('Poliframe')
@@ -75,6 +76,20 @@ handle('app:info', () => ({
   platform: process.platform,
 }))
 handle('updates:check', () => checkForUpdates(true))
+handle('updates:install', () => installUpdate())
+let notificationsReady = false
+const pendingNotifications = new Map<string, AppNotification>()
+handle('notifications:ready', () => {
+  notificationsReady = true
+  const pending = [...pendingNotifications.values()]
+  pendingNotifications.clear()
+  return pending
+})
+function notify(notification: AppNotification) {
+  if (notificationsReady && !mainWindow.isDestroyed())
+    mainWindow.webContents.send('app:notification', notification)
+  else pendingNotifications.set(notification.id, notification)
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -92,6 +107,9 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
     },
+  })
+  mainWindow.webContents.on('did-start-loading', () => {
+    notificationsReady = false
   })
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   mainWindow.webContents.on('will-navigate', (event) => {
@@ -180,7 +198,7 @@ app.whenReady().then(async () => {
   )
   initializeUpdates(() => {
     isQuitting = true
-  })
+  }, notify)
 })
 app.on('activate', () => mainWindow?.show())
 app.on('before-quit', (event) => {

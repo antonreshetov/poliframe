@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { Download, X, ZoomIn, ZoomOut } from '@lucide/vue'
+import { Download, ZoomIn, ZoomOut } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
-import { computed, provide, ref, watch } from 'vue'
+import { computed, onUnmounted, provide, ref, watch } from 'vue'
+import { toast } from 'vue-sonner'
 import AnnotatePanel from '@/components/editor/AnnotatePanel.vue'
 import ComposePanel from '@/components/editor/ComposePanel.vue'
 import CropEditor from '@/components/editor/CropEditor.vue'
@@ -9,11 +10,32 @@ import ExportSettings from '@/components/editor/ExportSettings.vue'
 import PresetsMenu from '@/components/editor/PresetsMenu.vue'
 import PreviewCanvas from '@/components/editor/PreviewCanvas.vue'
 import { Button } from '@/components/ui/button'
+import { Toaster } from '@/components/ui/sonner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { editorKey, useEditor } from '@/composables/useEditor'
 
 const api = window.poliframe
 const e = useEditor()
+const stopNotifications = api.onNotification((notification) => {
+  toast[notification.type](notification.message, {
+    id: notification.id,
+    description: notification.description,
+    duration: notification.action ? Infinity : 6000,
+    cancel: notification.action
+      ? { label: 'Later', onClick: () => {} }
+      : undefined,
+    action:
+      notification.action === 'install-update'
+        ? {
+            label: 'Restart and install',
+            onClick: () => {
+              void api.installUpdate().catch(e.fail)
+            },
+          }
+        : undefined,
+  })
+})
+onUnmounted(stopNotifications)
 provide(editorKey, e)
 const outputLayout = computed(
   () => e.interactivePreview?.layout ?? e.preview?.layout,
@@ -91,33 +113,12 @@ watch(
       </Tabs>
     </aside>
     <section class="workspace">
-      <div
-        v-if="e.error"
-        class="absolute inset-x-4 top-4 z-20 flex items-start gap-3 rounded-md border bg-background px-4 py-3 text-sm text-destructive shadow-md"
-        role="alert"
-      >
-        <span class="flex-1 whitespace-pre-line">{{ e.error }}</span><Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Dismiss error"
-          @click="e.error = ''"
-        >
-          <X />
-        </Button>
-      </div>
       <PreviewCanvas
         :zoom="zoom"
         @zoom="zoom = $event"
         @scale="effectiveZoom = $event"
         @fit="fitZoom = $event"
       />
-      <p
-        v-if="e.status"
-        class="absolute inset-x-4 bottom-16 z-20 rounded-md border bg-background px-4 py-2 text-xs text-muted-foreground shadow-md"
-        role="status"
-      >
-        {{ e.status }}
-      </p>
       <footer class="toolbar">
         <div class="flex items-center gap-1">
           <Button
@@ -163,13 +164,6 @@ watch(
           {{ outputLayout.width }} × {{ outputLayout.height }} px
         </span>
         <ExportSettings /><Button
-          v-if="e.busy"
-          variant="outline"
-          @click="api.cancelExport().catch(e.fail)"
-        >
-          Cancel export
-        </Button><Button
-          v-else
           :disabled="!e.canExport"
           @click="e.exportImage"
         >
@@ -178,6 +172,11 @@ watch(
       </footer>
     </section>
     <CropEditor />
+    <Toaster
+      theme="dark"
+      position="bottom-right"
+      :offset="64"
+    />
   </main>
 </template>
 

@@ -14,7 +14,6 @@ function setup(packaged = true) {
   const order = []
   let checks = 0
   let downloads = 0
-  let response = 1
   let timerCallback
   let interval
   let cleared = false
@@ -31,10 +30,7 @@ function setup(packaged = true) {
     exports,
     require: (name) => {
       if (name === 'electron') {
-        return { app, dialog: { showMessageBox: async (options) => {
-          messages.push(options)
-          return { response }
-        } } }
+        return { app }
       }
       if (name === 'electron-updater')
         return { autoUpdater: updater }
@@ -54,9 +50,8 @@ function setup(packaged = true) {
     messages,
     order,
     api: exports,
-    initialize: () => exports.initializeUpdates(() => order.push('prepare')),
+    initialize: () => exports.initializeUpdates(() => order.push('prepare'), notification => messages.push(notification)),
     tick: () => timerCallback(),
-    respond: (value) => { response = value },
     get checks() { return checks },
     get downloads() { return downloads },
     get interval() { return interval },
@@ -99,8 +94,8 @@ test('downloads once and prepares window lifecycle before installing', async () 
   s.updater.emit('update-downloaded', { version: '2.3.8' })
   await flush()
   assert.deepEqual(s.order, [])
-  s.respond(0)
-  await s.api.checkForUpdates(true)
+  assert.equal(s.messages.at(-1).action, 'install-update')
+  s.api.installUpdate()
   assert.deepEqual(s.order, ['prepare', 'install'])
   assert.equal(s.updater.autoInstallOnAppQuit, true)
 })
@@ -130,4 +125,11 @@ test('download failure permits a retry on the next check', async () => {
   s.updater.emit('update-available')
   await flush()
   assert.equal(attempts, 2)
+})
+
+test('install action does nothing before an update is downloaded', () => {
+  const s = setup()
+  s.initialize()
+  s.api.installUpdate()
+  assert.deepEqual(s.order, [])
 })

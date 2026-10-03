@@ -142,6 +142,13 @@ export interface Preset {
   settings: Omit<Composition, 'panels' | 'revision'>
   logo?: string
 }
+export interface AppNotification {
+  id: string
+  type: 'info' | 'success' | 'error'
+  message: string
+  description?: string
+  action?: 'install-update'
+}
 export interface AppApi {
   importImages: (
     paths?: string[],
@@ -165,5 +172,9 @@ export interface AppApi {
   }
   info: () => Promise<{ version: string, platform: string }>
   checkUpdates: () => Promise<void>
+  installUpdate: () => Promise<void>
+  onNotification: (
+    callback: (notification: AppNotification) => void,
+  ) => () => void
   droppedFilePath: (file: File) => string
 }

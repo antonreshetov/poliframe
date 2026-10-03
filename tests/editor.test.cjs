@@ -69,6 +69,7 @@ async function flush() {
   await vue.nextTick()
 }
 function setup(t) {
+  const notifications = []
   const registry = new Set()
   let sequence = 0
   const api = {
@@ -115,6 +116,7 @@ function setup(t) {
   const { useEditor, leaves } = evaluate(
     source('src/renderer/composables/useEditor.ts'),
     {
+      'vue-sonner': { toast: Object.fromEntries(['error', 'success', 'info'].map(type => [type, (message, options) => notifications.push({ type, message, options })])) },
       '../../shared/defaults': defaultsModule,
       '../../shared/layout': evaluate(source('src/shared/layout.ts')),
     },
@@ -130,11 +132,11 @@ function setup(t) {
   })
   app.mount({})
   t.after(() => app.unmount())
-  return { editor, registry, leaves, api, window }
+  return { editor, registry, leaves, api, window, notifications }
 }
 
 test('replacing more than the registry capacity reclaims originals and thumbnails', async (t) => {
-  const { editor, registry } = setup(t)
+  const { editor, registry, notifications } = setup(t)
   await editor.add()
   for (let i = 0; i < 170; i++) {
     const previous = editor.state.panels[0].photoId
@@ -149,11 +151,11 @@ test('replacing more than the registry capacity reclaims originals and thumbnail
   await flush()
   assert.equal(registry.size, 0)
   assert.equal(Object.keys(editor.photos).length, 0)
-  assert.equal(editor.error, '')
+  assert.equal(notifications.length, 0)
 })
 
 test('clear retains pooled images; style presets preserve empty cells; grid presets populate', async (t) => {
-  const { editor, registry, leaves } = setup(t)
+  const { editor, registry, leaves, notifications } = setup(t)
   await editor.add()
   await editor.add()
   editor.state.layout = 'grid'
@@ -200,7 +202,7 @@ test('clear retains pooled images; style presets preserve empty cells; grid pres
     2,
   )
   assert.equal(registry.size, 2)
-  assert.equal(editor.error, '')
+  assert.equal(notifications.length, 0)
 })
 
 test('Compose mode handlers ignore deselection and accept valid layout and units', () => {
@@ -747,7 +749,7 @@ test('editor grid history and presets remain isolated across instances', async (
   assert.equal(second.editor.future.length, 0)
   assert.equal(second.editor.state.panels.length, 0)
   assert.equal(second.editor.activePreset, '')
-  assert.equal(second.editor.error, '')
+  assert.equal(second.notifications.length, 0)
 })
 
 test('preview completed before decode cannot replace newer geometry after decode', async (t) => {
@@ -876,4 +878,20 @@ test('viewport reacts to zoom and rejects regions superseded by pan or revision'
   await flush()
   assert.equal(controls.scale.value, fitScale)
   assert.equal(controls.regionPreview.value, null)
+})
+
+test('export cancellation is silent and successful exports use Sonner', async (t) => {
+  const { editor, api, notifications } = setup(t)
+  await editor.add()
+  api.exportImage = async () => ({ status: 'cancelled' })
+  await editor.exportImage()
+  assert.equal(notifications.length, 0)
+  assert.equal(editor.busy, false)
+  api.exportImage = async () => ({ status: 'saved', path: '/tmp/photo.jpg' })
+  await editor.exportImage()
+  assert.equal(notifications.at(-1).type, 'success')
+  assert.equal(notifications.at(-1).options.description, '/tmp/photo.jpg')
+  editor.fail(new Error('Import failed'))
+  editor.fail(new Error('Render failed'))
+  assert.equal(notifications.at(-1).options.id, notifications.at(-2).options.id)
 })

@@ -87,7 +87,7 @@ async function dropLogo(event: DragEvent) {
       )
     }
     if (result.errors.length)
-      e.error = result.errors.join('\n')
+      e.fail(result.errors.join('\n'))
   }
   catch (error) {
     e.fail(error)

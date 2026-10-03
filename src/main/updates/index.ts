@@ -1,4 +1,5 @@
-import { app, dialog } from 'electron'
+import type { AppNotification } from '../../shared/contracts'
+import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
 
 const CHECK_INTERVAL = 3 * 60 * 60 * 1000
@@ -8,26 +9,32 @@ let downloading = false
 let downloadedVersion: string | undefined
 let prepareToQuit: () => void
 
-async function offerInstallation() {
-  const { response } = await dialog.showMessageBox({
-    type: 'info',
+let notify: (notification: AppNotification) => void
+
+function offerInstallation() {
+  notify({
+    id: 'app-update',
+    type: 'success',
     message: `Version ${downloadedVersion} is ready to install.`,
-    detail: 'Restart now, or install the update when you quit the application.',
-    buttons: ['Restart and install', 'Later'],
-    defaultId: 0,
-    cancelId: 1,
+    description:
+      'Restart now, or install the update when you quit the application.',
+    action: 'install-update',
   })
-  if (response === 0) {
-    // quitAndInstall closes windows before Electron emits before-quit.
-    prepareToQuit()
-    autoUpdater.quitAndInstall()
-  }
+}
+
+export function installUpdate() {
+  if (!downloadedVersion)
+    return
+  prepareToQuit()
+  autoUpdater.quitAndInstall()
 }
 
 export async function checkForUpdates(manual = false): Promise<void> {
   if (!app.isPackaged) {
     if (manual) {
-      await dialog.showMessageBox({
+      notify({
+        id: 'app-update',
+        type: 'info',
         message: 'Updates are available in installed builds only.',
       })
     }
@@ -49,7 +56,9 @@ export async function checkForUpdates(manual = false): Promise<void> {
     try {
       const result = await autoUpdater.checkForUpdates()
       if (manual) {
-        await dialog.showMessageBox({
+        notify({
+          id: 'app-update',
+          type: 'info',
           message: result?.isUpdateAvailable
             ? `Downloading version ${result.updateInfo.version}…`
             : 'You are using the latest version.',
@@ -59,10 +68,11 @@ export async function checkForUpdates(manual = false): Promise<void> {
     catch (error) {
       console.error('Error checking for updates:', error)
       if (manual) {
-        await dialog.showMessageBox({
+        notify({
+          id: 'app-update',
           type: 'error',
           message: 'Unable to check for updates.',
-          detail: 'Please check your connection and try again later.',
+          description: 'Please check your connection and try again later.',
         })
       }
     }
@@ -75,7 +85,11 @@ export async function checkForUpdates(manual = false): Promise<void> {
   }
 }
 
-export function initializeUpdates(beforeInstall: () => void) {
+export function initializeUpdates(
+  beforeInstall: () => void,
+  sendNotification: (notification: AppNotification) => void,
+) {
+  notify = sendNotification
   if (!app.isPackaged || initialized)
     return
   initialized = true
@@ -93,6 +107,12 @@ export function initializeUpdates(beforeInstall: () => void) {
       .downloadUpdate()
       .catch((error) => {
         console.error('Error downloading update:', error)
+        notify({
+          id: 'app-update',
+          type: 'error',
+          message: 'Unable to download the update.',
+          description: 'Please check your connection and try again later.',
+        })
       })
       .finally(() => {
         downloading = false
@@ -100,7 +120,7 @@ export function initializeUpdates(beforeInstall: () => void) {
   })
   autoUpdater.on('update-downloaded', (info) => {
     downloadedVersion = info.version
-    void offerInstallation().catch(console.error)
+    offerInstallation()
   })
   autoUpdater.on('error', error =>
     console.error('Auto-update error:', error))
