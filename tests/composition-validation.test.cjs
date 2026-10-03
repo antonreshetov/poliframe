@@ -1,7 +1,10 @@
 const assert = require('node:assert/strict')
+const { join, resolve } = require('node:path')
 const { test } = require('node:test')
-const { validateComposition } = require('../build/main/services/validation.js')
-const { defaults, identityTransform } = require('../build/shared/defaults.js')
+
+const build = process.env.POLIFRAME_TEST_BUILD || resolve('build')
+const { validateComposition } = require(join(build, 'main/services/validation.js'))
+const { defaults, identityTransform } = require(join(build, 'shared/defaults.js'))
 
 test('default composition is a valid IPC snapshot', () =>
   validateComposition(defaults()))

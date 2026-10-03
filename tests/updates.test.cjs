@@ -1,8 +1,11 @@
 const assert = require('node:assert/strict')
 const { EventEmitter } = require('node:events')
 const { readFileSync } = require('node:fs')
+const { join, resolve } = require('node:path')
 const { test } = require('node:test')
 const { runInNewContext } = require('node:vm')
+
+const build = process.env.POLIFRAME_TEST_BUILD || resolve('build')
 
 function setup(packaged = true) {
   const app = Object.assign(new EventEmitter(), { isPackaged: packaged })
@@ -24,7 +27,7 @@ function setup(packaged = true) {
   }
   updater.quitAndInstall = () => order.push('install')
   const exports = {}
-  runInNewContext(readFileSync('build/main/updates/index.js', 'utf8'), {
+  runInNewContext(readFileSync(join(build, 'main/updates/index.js'), 'utf8'), {
     exports,
     require: (name) => {
       if (name === 'electron') {
