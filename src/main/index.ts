@@ -154,7 +154,16 @@ app.whenReady().then(async () => {
         ],
       },
       { role: 'editMenu' },
-      { role: 'viewMenu' },
+      {
+        label: 'View',
+        submenu: [
+          { role: 'reload' },
+          { role: 'forceReload' },
+          { role: 'toggleDevTools' },
+          { type: 'separator' },
+          { role: 'togglefullscreen' },
+        ],
+      },
       { role: 'windowMenu' },
       {
         role: 'help',
