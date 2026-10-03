@@ -1,14 +1,8 @@
-const assert = require('node:assert/strict')
-const { readFileSync } = require('node:fs')
-const { createRequire } = require('node:module')
-const { resolve } = require('node:path')
-const { test } = require('node:test')
-const { runInNewContext } = require('node:vm')
+import assert from 'node:assert/strict'
+import { it, vi } from 'vitest'
 
-const build = process.env.POLIFRAME_TEST_BUILD || resolve('build')
-const { defaults, identityTransform } = require(
-  resolve(build, 'shared/defaults.js'),
-)
+import { defaults, identityTransform } from '../src/shared/defaults.ts'
+
 const flush = () => new Promise(resolve => setImmediate(resolve))
 function deferred() {
   let complete
@@ -17,7 +11,7 @@ function deferred() {
   })
   return { promise, complete }
 }
-function setup() {
+async function setup() {
   const handlers = new Map()
   const calls = []
   let window
@@ -45,26 +39,15 @@ function setup() {
       return { filePath: '/result.jpg' }
     },
   }
-  const file = resolve(build, 'main/ipc/images.js')
-  const exports = {}
-  const moduleRequire = createRequire(file)
-  runInNewContext(readFileSync(file, 'utf8'), {
-    exports,
-    structuredClone,
-    require: (name) => {
-      if (name === 'electron')
-        return { dialog }
-      if (name === 'node:fs/promises') {
-        return {
-          realpath: async file => file,
-          mkdir: async () => calls.push(['mkdir']),
-          rename: async () => calls.push(['rename']),
-          rm: async () => calls.push(['rm']),
-        }
-      }
-      return moduleRequire(name)
-    },
-  })
+  vi.resetModules()
+  vi.doMock('electron', () => ({ dialog }))
+  vi.doMock('node:fs/promises', () => ({
+    realpath: async file => file,
+    mkdir: async () => calls.push(['mkdir']),
+    rename: async () => calls.push(['rename']),
+    rm: async () => calls.push(['rm']),
+  }))
+  const exports = await import('../src/main/ipc/images.ts')
   const lifecycle = exports.registerImageHandlers(
     (name, handler) => handlers.set(name, handler),
     { getWindow: () => window, assets, jobs, resources: '/resources' },
@@ -85,8 +68,8 @@ function setup() {
   }
 }
 
-test('image handlers resolve the current window and retain preview validation', async () => {
-  const { handlers, calls, setWindow, snapshot } = setup()
+it('image handlers resolve the current window and retain preview validation', async () => {
+  const { handlers, calls, setWindow, snapshot } = await setup()
   const window = {}
   setWindow(window)
   await handlers.get('images:import')()
@@ -102,8 +85,8 @@ test('image handlers resolve the current window and retain preview validation', 
   assert.equal(request.resources, '/resources')
 })
 
-test('cancel during the save dialog invalidates export before starting work', async () => {
-  const { handlers, calls, dialog, snapshot } = setup()
+it('cancel during the save dialog invalidates export before starting work', async () => {
+  const { handlers, calls, dialog, snapshot } = await setup()
   const pending = deferred()
   dialog.showSaveDialog = () => pending.promise
   const exporting = handlers.get('images:export')(snapshot)
@@ -116,8 +99,8 @@ test('cancel during the save dialog invalidates export before starting work', as
   )
 })
 
-test('cancel during native export prevents publish and cleans the temporary output', async () => {
-  const { handlers, calls, jobs, snapshot } = setup()
+it('cancel during native export prevents publish and cleans the temporary output', async () => {
+  const { handlers, calls, jobs, snapshot } = await setup()
   const pending = deferred()
   jobs.request = () => pending.promise
   const exporting = handlers.get('images:export')(snapshot)
@@ -132,8 +115,8 @@ test('cancel during native export prevents publish and cleans the temporary outp
   assert.equal(calls.at(-1)[0], 'rm')
 })
 
-test('shutdown invalidation during metadata copy prevents publish without cancelling jobs itself', async () => {
-  const { handlers, calls, assets, snapshot, lifecycle } = setup()
+it('shutdown invalidation during metadata copy prevents publish without cancelling jobs itself', async () => {
+  const { handlers, calls, assets, snapshot, lifecycle } = await setup()
   snapshot.output.metadataId = 'photo'
   const pending = deferred()
   assets.metadata.copySafeTags = () => pending.promise

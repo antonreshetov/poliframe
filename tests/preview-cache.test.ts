@@ -1,11 +1,10 @@
-const assert = require('node:assert/strict')
-const { Buffer } = require('node:buffer')
-const { join, resolve } = require('node:path')
-const { test } = require('node:test')
+import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
+import { it } from 'vitest'
 
-const { PreviewCache } = require(join(process.env.POLIFRAME_TEST_BUILD || resolve('build'), 'main/imaging/preview-cache.js'))
+import { PreviewCache } from '../src/main/imaging/preview-cache.ts'
 
-test('preview LRU reuses completed buffers and evicts within its byte budget', async () => {
+it('preview LRU reuses completed buffers and evicts within its byte budget', async () => {
   const cache = new PreviewCache(8)
   let reads = 0
   const read = () => {
@@ -27,8 +26,11 @@ test('preview LRU reuses completed buffers and evicts within its byte budget', a
   await cache.get('huge', huge)
   await cache.get('huge', huge)
   assert.equal(reads, 6, 'oversized values are not retained')
-  await assert.rejects(cache.get('failure', async () => {
-    throw new Error('decode')
-  }), /decode/)
+  await assert.rejects(
+    cache.get('failure', async () => {
+      throw new Error('decode')
+    }),
+    /decode/,
+  )
   await cache.get('failure', read)
 })

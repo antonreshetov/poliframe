@@ -1,22 +1,26 @@
-const assert = require('node:assert/strict')
-const { Buffer } = require('node:buffer')
-const { mkdtemp, rm } = require('node:fs/promises')
-const { tmpdir } = require('node:os')
-const { join, resolve } = require('node:path')
-const process = require('node:process')
-const { before, after, test } = require('node:test')
-const sharp = require('sharp')
+import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import sharp from 'sharp'
+import { afterAll as after, beforeAll as before, it } from 'vitest'
+import {
+  compose,
+  gestureImages,
+  transformImage,
+} from '../src/main/imaging/composition.ts'
 
-const buildRoot = process.env.POLIFRAME_TEST_BUILD || resolve('build')
-const { compose, transformImage } = require(
-  join(buildRoot, 'main/imaging/composition.js'),
-)
-const { defaults, identityTransform, gridTemplate } = require(
-  join(buildRoot, 'shared/defaults.js'),
-)
-const { calculateLayout, effectiveSize, parseOutputSize } = require(
-  join(buildRoot, 'shared/layout.js'),
-)
+import {
+  defaults,
+  gridTemplate,
+  identityTransform,
+} from '../src/shared/defaults.ts'
+import {
+  calculateLayout,
+  effectiveSize,
+  parseOutputSize,
+} from '../src/shared/layout.ts'
 
 let dir, assets
 const resources = resolve('resources')
@@ -54,7 +58,7 @@ after(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
-test('strip geometry, fixed pixel margins and output sizes', async () => {
+it('strip geometry, fixed pixel margins and output sizes', async () => {
   const s = state()
   let layout = await calculateLayout(s, assets)
   assert.equal(layout.width, 1208)
@@ -76,7 +80,7 @@ test('strip geometry, fixed pixel margins and output sizes', async () => {
   assert.deepEqual(parseOutputSize('bad'), { axis: 'native', value: 1 })
 })
 
-test('rotate and crop geometry and pixels follow rotate then flip then crop', async () => {
+it('rotate and crop geometry and pixels follow rotate then flip then crop', async () => {
   const path = join(dir, 'corners.png')
   const raw = Buffer.from([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0])
   await sharp(raw, { raw: { width: 2, height: 2, channels: 3 } })
@@ -98,7 +102,7 @@ test('rotate and crop geometry and pixels follow rotate then flip then crop', as
   assert.deepEqual([...pixel], [255, 0, 0])
 })
 
-test('recursive grid weights, holes and caption stay within chosen aspect', async () => {
+it('recursive grid weights, holes and caption stay within chosen aspect', async () => {
   const s = state()
   s.layout = 'grid'
   s.gridAspect = '4:5'
@@ -117,7 +121,7 @@ test('recursive grid weights, holes and caption stay within chosen aspect', asyn
   )
 })
 
-test('print Fit and Fill retain source resolution while Grid uses paper DPI', async () => {
+it('print Fit and Fill retain source resolution while Grid uses paper DPI', async () => {
   const large = assets.map(p => ({ ...p, width: 6000, height: 4000 }))
   const s = state(large)
   s.print.enabled = true
@@ -140,7 +144,7 @@ test('print Fit and Fill retain source resolution while Grid uses paper DPI', as
   assert.equal(grid.height, 3543)
 })
 
-test('caption height changes native output and preview returns full geometry', async () => {
+it('caption height changes native output and preview returns full geometry', async () => {
   const s = state()
   s.caption.enabled = true
   s.caption.title = 'A title with & markup <escaped>'
@@ -165,7 +169,7 @@ for (const style of [
   'classic',
   'luxe',
 ]) {
-  test(`bundled caption style ${style} renders`, async () => {
+  it(`bundled caption style ${style} renders`, async () => {
     const s = state([assets[0]])
     s.caption.enabled = true
     s.caption.title = 'Poliframe'
@@ -179,7 +183,7 @@ for (const style of [
   })
 }
 
-test('16-bit ramp survives transform and native composition', async () => {
+it('16-bit ramp survives transform and native composition', async () => {
   const width = 1024
   const path = join(dir, 'ramp.png')
   const pixels = Uint16Array.from({ length: width * 3 }, (_, i) =>
@@ -201,7 +205,7 @@ test('16-bit ramp survives transform and native composition', async () => {
   )
 })
 
-test('watermark preserves source alpha and multiplies opacity', async () => {
+it('watermark preserves source alpha and multiplies opacity', async () => {
   const path = join(dir, 'logo.png')
   await sharp({
     create: {
@@ -232,7 +236,7 @@ test('watermark preserves source alpha and multiplies opacity', async () => {
   assert.ok(raw[offset + 2] < 20)
 })
 
-test('watermark beyond the canvas clips without stretching or encoder errors', async () => {
+it('watermark beyond the canvas clips without stretching or encoder errors', async () => {
   const path = join(dir, 'tall-logo.png')
   await sharp({
     create: { width: 10, height: 100, channels: 4, background: '#00ff00' },
@@ -248,7 +252,7 @@ test('watermark beyond the canvas clips without stretching or encoder errors', a
   assert.equal(result.info.height, 133)
 })
 
-test('small Fill sources do not upscale, and minimum output remains renderable', async () => {
+it('small Fill sources do not upscale, and minimum output remains renderable', async () => {
   const s = state()
   s.print.enabled = true
   s.print.fit = 'fill'
@@ -265,7 +269,7 @@ test('small Fill sources do not upscale, and minimum output remains renderable',
   assert.ok(result.info.width >= 1)
 })
 
-test('full render budget rejects oversized canvas while preview remains bounded', async () => {
+it('full render budget rejects oversized canvas while preview remains bounded', async () => {
   const huge = assets.map(p => ({ ...p, width: 20000, height: 20000 }))
   const s = state(huge)
   await assert.rejects(compose(s, huge, resources), /budget/)
@@ -277,7 +281,7 @@ test('full render budget rejects oversized canvas while preview remains bounded'
   )
 })
 
-test('region render matches the same full-resolution composition crop', async () => {
+it('region render matches the same full-resolution composition crop', async () => {
   const s = state()
   s.caption.enabled = true
   s.caption.title = 'Region text'
@@ -306,7 +310,7 @@ test('region render matches the same full-resolution composition crop', async ()
   assert.deepEqual(actual, crop)
 })
 
-test('tagged and untagged sRGB 8/16-bit sources preserve the same visible saturated colors', async () => {
+it('tagged and untagged sRGB 8/16-bit sources preserve the same visible saturated colors', async () => {
   const colors = Buffer.from([250, 64, 28, 18, 240, 100, 48, 96, 255])
   const variants = [
     [
@@ -346,7 +350,7 @@ test('tagged and untagged sRGB 8/16-bit sources preserve the same visible satura
   variants.push(['untagged16', untagged16])
   for (const [name, data] of variants) {
     const path = join(dir, `${name}.png`)
-    await require('node:fs/promises').writeFile(path, data)
+    await (await import('node:fs/promises')).writeFile(path, data)
     const asset = { ...assets[0], path, width: 3, height: 1 }
     const s = state([asset])
     const { pipeline } = await compose(s, [asset], resources)
@@ -365,27 +369,41 @@ test('tagged and untagged sRGB 8/16-bit sources preserve the same visible satura
   }
 })
 
-test('gesture photos preserve transformed source aspect instead of the old grid cell crop', async () => {
-  const { gestureImages } = require(join(buildRoot, 'main/imaging/composition.js'))
+it('gesture photos preserve transformed source aspect instead of the old grid cell crop', async () => {
   const s = state()
   s.layout = 'grid'
-  s.grid = gridTemplate('2x2', assets.map(a => a.id))
+  s.grid = gridTemplate(
+    '2x2',
+    assets.map(a => a.id),
+  )
   s.panels[0].transform.rotation = 90
   s.panels[0].transform.crop = { x: 0.1, y: 0.1, width: 0.8, height: 0.5 }
   const before = await gestureImages(s, assets)
   const effective = effectiveSize(assets[0], s.panels[0].transform)
-  assert.equal(before[0].width / before[0].height, effective.width / effective.height)
+  assert.equal(
+    before[0].width / before[0].height,
+    effective.width / effective.height,
+  )
   s.grid.children[0].weights = [0.8, 0.2]
   const after = await gestureImages(s, assets)
-  assert.deepEqual(after, before, 'divider movement must not crop or re-encode the gesture source')
-  const image = await sharp(Buffer.from(before[0].dataUrl.split(',')[1], 'base64')).metadata()
+  assert.deepEqual(
+    after,
+    before,
+    'divider movement must not crop or re-encode the gesture source',
+  )
+  const image = await sharp(
+    Buffer.from(before[0].dataUrl.split(',')[1], 'base64'),
+  ).metadata()
   assert.equal(image.width, before[0].width)
   assert.equal(image.height, before[0].height)
 })
 
-test('preview cache invalidates when an imported file changes on disk', async () => {
+it('preview cache invalidates when an imported file changes on disk', async () => {
   const path = join(dir, 'mutable.png')
-  const write = color => sharp({ create: { width: 60, height: 40, channels: 3, background: color } }).png().toFile(path)
+  const write = color =>
+    sharp({ create: { width: 60, height: 40, channels: 3, background: color } })
+      .png()
+      .toFile(path)
   await write('#ff0000')
   const photo = { ...assets[0], path, width: 60, height: 40 }
   const s = state([photo])
@@ -397,7 +415,7 @@ test('preview cache invalidates when an imported file changes on disk', async ()
   assert.notDeepEqual(blue, red)
 })
 
-test('Fill matches native source DPI and respects explicit output sizing', async () => {
+it('fill matches native source DPI and respects explicit output sizing', async () => {
   const photos = [{ ...assets[0], width: 7563, height: 5042 }]
   const s = state(photos)
   s.print.enabled = true

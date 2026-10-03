@@ -1,15 +1,14 @@
-const assert = require('node:assert/strict')
-const { randomUUID } = require('node:crypto')
-const { mkdtemp, readFile, rm } = require('node:fs/promises')
-const os = require('node:os')
-const path = require('node:path')
-const { test } = require('node:test')
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { it } from 'vitest'
 
-const build = process.env.POLIFRAME_TEST_BUILD || path.resolve('build')
-const { PresetStore } = require(path.join(build, 'main/services/presets.js'))
-const { defaults, identityTransform } = require(path.join(build, 'shared/defaults.js'))
+import { PresetStore } from '../src/main/services/presets.ts'
+import { defaults, identityTransform } from '../src/shared/defaults.ts'
 
-test('presets exclude photographs, source selection, revision and print settings', async () => {
+it('presets exclude photographs, source selection, revision and print settings', async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), 'poliframe-preset-test-'),
   )
@@ -47,7 +46,7 @@ test('presets exclude photographs, source selection, revision and print settings
   }
 })
 
-test('removing or updating a preset keeps applied logo assets alive', async () => {
+it('removing or updating a preset keeps applied logo assets alive', async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), 'poliframe-preset-test-'),
   )
