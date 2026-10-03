@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Download, X, ZoomIn, ZoomOut } from '@lucide/vue'
+import { useEventListener } from '@vueuse/core'
 import { computed, provide, ref, watch } from 'vue'
 import AnnotatePanel from '@/components/editor/AnnotatePanel.vue'
 import ComposePanel from '@/components/editor/ComposePanel.vue'
@@ -20,6 +21,35 @@ const outputLayout = computed(
 const zoom = ref<number | null>(null)
 const effectiveZoom = ref(100)
 const fitZoom = ref(100)
+function zoomIn() {
+  if (e.preview && effectiveZoom.value < 99.9)
+    zoom.value = Math.min(100, (zoom.value ?? effectiveZoom.value) * 1.5)
+}
+function zoomOut() {
+  if (!e.preview || effectiveZoom.value <= fitZoom.value + 0.1)
+    return
+  const next = (zoom.value ?? effectiveZoom.value) / 1.5
+  zoom.value = next <= fitZoom.value ? null : next
+}
+useEventListener(window, 'keydown', (event) => {
+  if (
+    event.defaultPrevented
+    || !(event.metaKey || event.ctrlKey)
+    || event.altKey
+  ) {
+    return
+  }
+  if (!['+', '=', '-', '0'].includes(event.key))
+    return
+  event.preventDefault()
+  if (document.querySelector('[role="dialog"]'))
+    return
+  if (event.key === '0')
+    zoom.value = null
+  else if (event.key === '-')
+    zoomOut()
+  else zoomIn()
+})
 watch(
   () => e.state.panels.map(panel => panel.photoId).join(),
   () => {
@@ -95,12 +125,7 @@ watch(
             size="icon-sm"
             aria-label="Zoom out"
             :disabled="effectiveZoom <= fitZoom + 0.1 || !e.preview"
-            @click="
-              zoom
-                = (zoom ?? effectiveZoom) / 1.5 <= fitZoom
-                  ? null
-                  : (zoom ?? effectiveZoom) / 1.5
-            "
+            @click="zoomOut"
           >
             <ZoomOut />
           </Button><span class="w-12 text-center text-xs tabular-nums">{{
@@ -110,7 +135,7 @@ watch(
             size="icon-sm"
             aria-label="Zoom in"
             :disabled="effectiveZoom >= 99.9 || !e.preview"
-            @click="zoom = Math.min(100, (zoom ?? effectiveZoom) * 1.5)"
+            @click="zoomIn"
           >
             <ZoomIn />
           </Button><Button

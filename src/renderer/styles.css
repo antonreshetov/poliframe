@@ -129,7 +129,14 @@
     @apply bg-background text-foreground;
     @apply font-sans;
     font-size: 13px;
+    user-select: none;
     }
+  input,
+  textarea,
+  [contenteditable="true"],
+  [contenteditable=""] {
+    user-select: text;
+  }
 }
 [data-slot="button"].grid-template-thumb {
     width: 100%;
