@@ -1,13 +1,13 @@
-const assert = require('node:assert/strict')
-const { EventEmitter } = require('node:events')
-const { readFileSync } = require('node:fs')
-const { join, resolve } = require('node:path')
-const { test } = require('node:test')
-const { runInNewContext } = require('node:vm')
+import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import { afterEach, it, vi } from 'vitest'
 
-const build = process.env.POLIFRAME_TEST_BUILD || resolve('build')
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
-function setup(packaged = true) {
+async function setup(packaged = true) {
   const app = Object.assign(new EventEmitter(), { isPackaged: packaged })
   const updater = new EventEmitter()
   const messages = []
@@ -25,52 +25,58 @@ function setup(packaged = true) {
     downloads++
   }
   updater.quitAndInstall = () => order.push('install')
-  const exports = {}
-  runInNewContext(readFileSync(join(build, 'main/updates/index.js'), 'utf8'), {
-    exports,
-    require: (name) => {
-      if (name === 'electron') {
-        return { app }
-      }
-      if (name === 'electron-updater')
-        return { autoUpdater: updater }
-      throw new Error(name)
-    },
-    console: { error() {} },
-    setInterval: (fn, ms) => {
-      timerCallback = fn
-      interval = ms
-      return { unref() {} }
-    },
-    clearInterval: () => { cleared = true },
+  vi.resetModules()
+  vi.doMock('electron', () => ({ app }))
+  vi.doMock('electron-updater', () => ({ autoUpdater: updater }))
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.stubGlobal('setInterval', (fn, ms) => {
+    timerCallback = fn
+    interval = ms
+    return { unref() {} }
   })
+  vi.stubGlobal('clearInterval', () => {
+    cleared = true
+  })
+  const exports = await import('../src/main/updates/index.ts')
   return {
     app,
     updater,
     messages,
     order,
     api: exports,
-    initialize: () => exports.initializeUpdates(() => order.push('prepare'), notification => messages.push(notification)),
+    initialize: () =>
+      exports.initializeUpdates(
+        () => order.push('prepare'),
+        notification => messages.push(notification),
+      ),
     tick: () => timerCallback(),
-    get checks() { return checks },
-    get downloads() { return downloads },
-    get interval() { return interval },
-    get cleared() { return cleared },
+    get checks() {
+      return checks
+    },
+    get downloads() {
+      return downloads
+    },
+    get interval() {
+      return interval
+    },
+    get cleared() {
+      return cleared
+    },
   }
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve))
 
-test('development never contacts the update service', async () => {
-  const s = setup(false)
+it('development never contacts the update service', async () => {
+  const s = await setup(false)
   s.initialize()
   await s.api.checkForUpdates(true)
   assert.equal(s.checks, 0)
   assert.match(s.messages[0].message, /installed builds/)
 })
 
-test('checks at startup and every three hours, installs listeners once, cleans timer', async () => {
-  const s = setup()
+it('checks at startup and every three hours, installs listeners once, cleans timer', async () => {
+  const s = await setup()
   s.initialize()
   s.initialize()
   await flush()
@@ -84,8 +90,8 @@ test('checks at startup and every three hours, installs listeners once, cleans t
   assert.equal(s.cleared, true)
 })
 
-test('downloads once and prepares window lifecycle before installing', async () => {
-  const s = setup()
+it('downloads once and prepares window lifecycle before installing', async () => {
+  const s = await setup()
   s.initialize()
   await flush()
   s.updater.emit('update-available', { version: '2.3.8' })
@@ -100,8 +106,8 @@ test('downloads once and prepares window lifecycle before installing', async () 
   assert.equal(s.updater.autoInstallOnAppQuit, true)
 })
 
-test('manual network failures show an error instead of claiming no updates', async () => {
-  const s = setup()
+it('manual network failures show an error instead of claiming no updates', async () => {
+  const s = await setup()
   s.initialize()
   await flush()
   s.updater.checkForUpdates = async () => {
@@ -111,8 +117,8 @@ test('manual network failures show an error instead of claiming no updates', asy
   assert.equal(s.messages.at(-1).type, 'error')
 })
 
-test('download failure permits a retry on the next check', async () => {
-  const s = setup()
+it('download failure permits a retry on the next check', async () => {
+  const s = await setup()
   s.initialize()
   await flush()
   let attempts = 0
@@ -127,8 +133,8 @@ test('download failure permits a retry on the next check', async () => {
   assert.equal(attempts, 2)
 })
 
-test('install action does nothing before an update is downloaded', () => {
-  const s = setup()
+it('install action does nothing before an update is downloaded', async () => {
+  const s = await setup()
   s.initialize()
   s.api.installUpdate()
   assert.deepEqual(s.order, [])

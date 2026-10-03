@@ -1,23 +1,18 @@
-const assert = require('node:assert/strict')
-const { Buffer } = require('node:buffer')
-const { mkdtemp, rm } = require('node:fs/promises')
-const { tmpdir } = require('node:os')
-const { join, resolve } = require('node:path')
-const { test } = require('node:test')
-const sharp = require('sharp')
+import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import sharp from 'sharp'
+import { it } from 'vitest'
 
-const build = process.env.POLIFRAME_TEST_BUILD || resolve('build')
-const { compose } = require(join(build, 'main/imaging/composition.js'))
-const { annotationPreview } = require(
-  join(build, 'main/imaging/annotations.js'),
-)
-const { defaults, identityTransform } = require(
-  join(build, 'shared/defaults.js'),
-)
+import { annotationPreview } from '../src/main/imaging/annotations.ts'
+import { compose } from '../src/main/imaging/composition.ts'
+import { defaults, identityTransform } from '../src/shared/defaults.ts'
 
-test('layered annotation preview preserves native caption geometry for every preset', async (t) => {
+it('layered annotation preview preserves native caption geometry for every preset', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'poliframe-caption-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
+  t.onTestFinished(() => rm(dir, { recursive: true, force: true }))
   const path = join(dir, 'photo.jpg')
   await sharp({
     create: { width: 3000, height: 2000, channels: 3, background: '#8090a0' },
@@ -59,19 +54,31 @@ test('layered annotation preview preserves native caption geometry for every pre
     assert.ok(layered.annotationLayers.length > 0)
     assert.equal(layered.dataUrl, '')
     assert.equal(layered.gestureImages.length, 1)
-    const full = await annotationPreview(state, [photo], resolve('resources'), 100000)
+    const full = await annotationPreview(
+      state,
+      [photo],
+      resolve('resources'),
+      100000,
+    )
     for (const layer of layered.annotationLayers) {
       assert.ok(layer.width > 0 && layer.height > 0)
       assert.match(layer.dataUrl, /^data:image\/png;base64,/)
-      const original = full.annotationLayers[layered.annotationLayers.indexOf(layer)]
+      const original
+        = full.annotationLayers[layered.annotationLayers.indexOf(layer)]
       const pixels = Buffer.from(layer.dataUrl.split(',')[1], 'base64')
       const info = await sharp(pixels).metadata()
-      const expected = await sharp(Buffer.from(original.dataUrl.split(',')[1], 'base64'))
+      const expected = await sharp(
+        Buffer.from(original.dataUrl.split(',')[1], 'base64'),
+      )
         .resize(info.width, info.height, { fit: 'fill' })
         .extractChannel('alpha')
         .raw()
         .toBuffer()
-      assert.deepEqual(await sharp(pixels).extractChannel('alpha').raw().toBuffer(), expected, `${style}: scaled text preserves both edges`)
+      assert.deepEqual(
+        await sharp(pixels).extractChannel('alpha').raw().toBuffer(),
+        expected,
+        `${style}: scaled text preserves both edges`,
+      )
     }
   }
   state.caption.style = 'studio'
@@ -82,7 +89,8 @@ test('layered annotation preview preserves native caption geometry for every pre
     await annotationPreview(state, [photo], resolve('resources'), 1200)
     elapsed.push(performance.now() - start)
   }
-  t.diagnostic(
+  // eslint-disable-next-line no-console
+  console.info(
     `Warm caption padding preview median: ${elapsed.sort((a, b) => a - b)[5].toFixed(1)} ms`,
   )
   for (const field of ['size', 'title']) {
@@ -94,7 +102,8 @@ test('layered annotation preview preserves native caption geometry for every pre
       await annotationPreview(state, [photo], resolve('resources'), 1200)
       samples.push(performance.now() - start)
     }
-    t.diagnostic(
+    // eslint-disable-next-line no-console
+    console.info(
       `Caption ${field} median: ${samples.sort((a, b) => a - b)[5].toFixed(1)} ms`,
     )
   }

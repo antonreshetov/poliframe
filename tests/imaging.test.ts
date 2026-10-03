@@ -1,27 +1,26 @@
-const assert = require('node:assert/strict')
-const {
-  mkdtemp,
-  rm,
+import assert from 'node:assert/strict'
+import {
   access,
-  writeFile,
-  readFile,
+  mkdtemp,
   readdir,
-} = require('node:fs/promises')
-const { tmpdir } = require('node:os')
-const { join, resolve } = require('node:path')
-const process = require('node:process')
-const { test, before, after } = require('node:test')
-const { ExifTool } = require('exiftool-vendored')
-const sharp = require('sharp')
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { ExifTool } from 'exiftool-vendored'
+import sharp from 'sharp'
+import { afterAll as after, beforeAll as before, it } from 'vitest'
 
-const {
+import {
+  exportImage,
   ImageMetadata,
   openImage,
-  resizeImage,
-  exportImage,
   renderText,
+  resizeImage,
   validateDimensions,
-} = require(join(process.env.POLIFRAME_TEST_BUILD || resolve('build'), 'main/imaging/index.js'))
+} from '../src/main/imaging/index.ts'
 
 let dir, source
 const metadata = new ImageMetadata()
@@ -53,7 +52,7 @@ after(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
-test('orientation and bounded native image primitives', async () => {
+it('orientation and bounded native image primitives', async () => {
   const info = await metadata.inspect(source)
   assert.equal(info.orientation, 6)
   assert.equal(info.width, 8)
@@ -68,7 +67,7 @@ test('orientation and bounded native image primitives', async () => {
 for (const format of ['png', 'tiff', 'jpeg']) {
   for (const bitDepth of [8, 16]) {
     for (const copy of [false, true]) {
-      test(`${format} ${bitDepth} bit, metadata ${copy ? 'selected source' : 'off'}`, async () => {
+      it(`${format} ${bitDepth} bit, metadata ${copy ? 'selected source' : 'off'}`, async () => {
         const destination = join(
           dir,
           `${format}-${bitDepth}-${copy}.${format}`,
@@ -117,7 +116,7 @@ for (const profile of [
   'p3',
   { path: '/System/Library/ColorSync/Profiles/AdobeRGB1998.icc' },
 ]) {
-  test(`ICC transform ${typeof profile === 'string' ? profile : 'Adobe RGB'}`, async (t) => {
+  it(`ICC transform ${typeof profile === 'string' ? profile : 'Adobe RGB'}`, async (t) => {
     if (typeof profile !== 'string') {
       try {
         await access(profile.path)
@@ -145,7 +144,7 @@ for (const profile of [
   })
 }
 
-test('16-bit PNG and TIFF retain more than 256 distinct ramp samples', async () => {
+it('16-bit PNG and TIFF retain more than 256 distinct ramp samples', async () => {
   const width = 1024
   const pixels = Uint16Array.from({ length: width * 3 }, (_, i) =>
     Math.round((Math.floor(i / 3) * 65535) / (width - 1)))
@@ -175,7 +174,7 @@ test('16-bit PNG and TIFF retain more than 256 distinct ramp samples', async () 
   }
 })
 
-test('fontfile text primitive escapes markup and renders native text', async (t) => {
+it('fontfile text primitive escapes markup and renders native text', async (t) => {
   const font = '/System/Library/Fonts/Supplemental/Arial.ttf'
   try {
     await access(font)
@@ -191,7 +190,7 @@ test('fontfile text primitive escapes markup and renders native text', async (t)
   assert.equal(info.hasAlpha, true)
 })
 
-test('failed metadata transfer preserves an existing destination', async () => {
+it('failed metadata transfer preserves an existing destination', async () => {
   const destination = join(dir, 'existing.png')
   await writeFile(destination, 'existing content')
   await assert.rejects(
@@ -211,11 +210,19 @@ test('failed metadata transfer preserves an existing destination', async () => {
 })
 
 for (const format of ['png', 'jpeg']) {
-  test(`metadata source without safe tags is a no-op (${format})`, async () => {
+  it(`metadata source without safe tags is a no-op (${format})`, async () => {
     const plain = join(dir, `plain.${format}`)
-    await sharp({ create: { width: 4, height: 3, channels: 3, background: '#123456' } })[format]().toFile(plain)
+    const image = sharp({
+      create: { width: 4, height: 3, channels: 3, background: '#123456' },
+    })
+    await image[format]().toFile(plain)
     const destination = join(dir, `plain-export-${format}.tiff`)
-    await exportImage(openImage(plain), destination, { format: 'tiff', bitDepth: 16, profile: 'srgb', metadataSource: plain }, metadata)
+    await exportImage(
+      openImage(plain),
+      destination,
+      { format: 'tiff', bitDepth: 16, profile: 'srgb', metadataSource: plain },
+      metadata,
+    )
     const tags = await verifier.readRaw(destination, { readArgs: ['-n'] })
     assert.equal(tags.ImageWidth, 4)
     assert.equal(tags.ImageHeight, 3)
@@ -225,23 +232,35 @@ for (const format of ['png', 'jpeg']) {
   })
 }
 
-test('invalid ICC preserves destination and removes temporary output', async () => {
+it('invalid ICC preserves destination and removes temporary output', async () => {
   const profile = join(dir, 'invalid.icc')
   const destination = join(dir, 'invalid-profile.png')
   await writeFile(profile, 'invalid ICC data')
   await writeFile(destination, 'original destination')
-  await assert.rejects(exportImage(openImage(source), destination, {
-    format: 'png',
-    bitDepth: 16,
-    profile: { path: profile },
-  }), /profile|ICC/i)
+  await assert.rejects(
+    exportImage(openImage(source), destination, {
+      format: 'png',
+      bitDepth: 16,
+      profile: { path: profile },
+    }),
+    /profile|ICC/i,
+  )
   assert.equal(await readFile(destination, 'utf8'), 'original destination')
-  assert.ok(!(await readdir(dir)).some(name => name.startsWith('.invalid-profile.png.')))
+  assert.ok(
+    !(await readdir(dir)).some(name =>
+      name.startsWith('.invalid-profile.png.'),
+    ),
+  )
 })
 
-test('native Print Fit exports computed DPI above 2400 without changing pixels', async () => {
+it('native Print Fit exports computed DPI above 2400 without changing pixels', async () => {
   const destination = join(dir, 'native-print-dpi.tiff')
-  await exportImage(resizeImage(source, 6, 4), destination, { format: 'tiff', bitDepth: 16, profile: 'srgb', dpi: 5080 })
+  await exportImage(resizeImage(source, 6, 4), destination, {
+    format: 'tiff',
+    bitDepth: 16,
+    profile: 'srgb',
+    dpi: 5080,
+  })
   const tags = await verifier.readRaw(destination, { readArgs: ['-n'] })
   assert.equal(tags.ImageWidth, 6)
   assert.equal(tags.ImageHeight, 4)

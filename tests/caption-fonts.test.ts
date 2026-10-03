@@ -1,12 +1,14 @@
-const assert = require('node:assert/strict')
-const { Buffer } = require('node:buffer')
-const { readFileSync } = require('node:fs')
-const { resolve } = require('node:path')
-const { test } = require('node:test')
-const sharp = require('sharp')
+import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
+import sharp from 'sharp'
+import { inject, it } from 'vitest'
+import { annotationPreview } from '../src/main/imaging/annotations.ts'
+import { captionFonts } from '../src/main/imaging/fonts.ts'
 
-const build = process.env.POLIFRAME_TEST_BUILD || resolve('build')
-const { captionFonts } = require(resolve(build, 'main/imaging/fonts.js'))
+import { defaults } from '../src/shared/defaults.ts'
 
 // Read the font's own Windows Unicode family/subfamily names as the oracle.
 function names(file) {
@@ -36,7 +38,7 @@ function names(file) {
 }
 
 for (const [face, description] of Object.entries(captionFonts)) {
-  test(`bundled caption face ${face} renders its own family instead of fallback`, async () => {
+  it(`bundled caption face ${face} renders its own family instead of fallback`, async () => {
     const file = resolve('resources/fonts', `${face}.ttf`)
     const metadata = names(file)
     const content = 'Annotation Hamburg 123'
@@ -67,16 +69,12 @@ for (const [face, description] of Object.entries(captionFonts)) {
   })
 }
 
-test('caption fonts survive the real render worker preview path', async (t) => {
-  const { RenderJobs } = require(
-    resolve(build, 'main/services/render-jobs.js'),
+it('caption fonts survive the real render worker preview path', async (t) => {
+  const { RenderJobs } = createRequire(import.meta.url)(
+    resolve(inject('workerBuild'), 'main/services/render-jobs.js'),
   )
-  const { annotationPreview } = require(
-    resolve(build, 'main/imaging/annotations.js'),
-  )
-  const { defaults } = require(resolve(build, 'shared/defaults.js'))
   const jobs = new RenderJobs()
-  t.after(() => jobs.close())
+  t.onTestFinished(() => jobs.close())
   const snapshot = defaults()
   snapshot.layout = 'grid'
   snapshot.caption.enabled = true

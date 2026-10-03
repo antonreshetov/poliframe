@@ -1,53 +1,35 @@
-const assert = require('node:assert/strict')
-const crypto = require('node:crypto')
-const { readFileSync } = require('node:fs')
-const { dirname, resolve } = require('node:path')
-const { test } = require('node:test')
-const { runInNewContext } = require('node:vm')
-const ts = require('typescript')
-const vue = require('vue')
-const { parse, compileScript } = require('vue/compiler-sfc')
+// @vitest-environment happy-dom
+import assert from 'node:assert/strict'
+import { afterEach, it, vi } from 'vitest'
+import * as vue from 'vue'
+import PhotoList from '../src/renderer/components/editor/compose/PhotoList.vue'
+import PrintSettings from '../src/renderer/components/editor/compose/PrintSettings.vue'
+import ComposePanel from '../src/renderer/components/editor/ComposePanel.vue'
+import PreviewCanvas from '../src/renderer/components/editor/PreviewCanvas.vue'
+import { usePreviewViewport } from '../src/renderer/composables/preview/usePreviewViewport.ts'
+import { leaves, useEditor } from '../src/renderer/composables/useEditor.ts'
+import * as defaultsModule from '../src/shared/defaults.ts'
+import * as geometry from '../src/shared/layout.ts'
 
-const source = file => readFileSync(resolve(__dirname, '..', file), 'utf8')
-function evaluate(code, imports = {}, window = {}, filename) {
-  const exports = {}
-  runInNewContext(
-    ts.transpileModule(code, {
-      compilerOptions: {
-        module: ts.ModuleKind.CommonJS,
-        target: ts.ScriptTarget.ES2022,
-      },
-    }).outputText,
-    {
-      exports,
-      crypto,
-      console,
-      window,
-      setTimeout,
-      clearTimeout,
-      requestAnimationFrame: callback => setTimeout(callback, 0),
-      cancelAnimationFrame: clearTimeout,
-      require: (name) => {
-        if (name === 'vue')
-          return vue
-        if (Object.hasOwn(imports, name))
-          return imports[name]
-        if (
-          filename
-          && (name.startsWith('.') || name.startsWith('@/composables/'))
-        ) {
-          const file = name.startsWith('@/')
-            ? `${resolve(__dirname, '../src/renderer', name.slice(2))}.ts`
-            : `${resolve(dirname(filename), name)}.ts`
-          return evaluate(readFileSync(file, 'utf8'), imports, window, file)
-        }
-        throw new Error(`Unexpected test import: ${name}`)
-      },
-    },
-  )
-  return exports
-}
-const defaultsModule = evaluate(source('src/shared/defaults.ts'))
+const context = vi.hoisted(() => ({ editor: null, notifications: [] }))
+vi.mock('../src/renderer/composables/useEditor.ts', async importOriginal => ({
+  ...(await importOriginal()),
+  useEditorContext: () => context.editor,
+}))
+vi.mock('vue-sonner', () => ({
+  toast: Object.fromEntries(
+    ['error', 'success', 'info'].map(type => [
+      type,
+      (message, options) =>
+        context.notifications.push({ type, message, options }),
+    ]),
+  ),
+}))
+const cleanups = []
+afterEach(() => {
+  for (const cleanup of cleanups.splice(0).reverse()) cleanup()
+  vi.unstubAllGlobals()
+})
 
 // A real Vue component scope runs lifecycle hooks and disposes watchers/timers.
 // The editor renders no DOM in these state/bridge regression tests.
@@ -68,7 +50,7 @@ async function flush() {
   await Promise.resolve()
   await vue.nextTick()
 }
-function setup(t) {
+function setup(_t) {
   const notifications = []
   const registry = new Set()
   let sequence = 0
@@ -113,16 +95,10 @@ function setup(t) {
     addEventListener() {},
     removeEventListener() {},
   }
-  const { useEditor, leaves } = evaluate(
-    source('src/renderer/composables/useEditor.ts'),
-    {
-      'vue-sonner': { toast: Object.fromEntries(['error', 'success', 'info'].map(type => [type, (message, options) => notifications.push({ type, message, options })])) },
-      '../../shared/defaults': defaultsModule,
-      '../../shared/layout': evaluate(source('src/shared/layout.ts')),
-    },
-    window,
-    resolve(__dirname, '../src/renderer/composables/useEditor.ts'),
-  )
+  vi.stubGlobal('window', window)
+  vi.stubGlobal('requestAnimationFrame', callback => setTimeout(callback, 0))
+  vi.stubGlobal('cancelAnimationFrame', clearTimeout)
+  context.notifications = notifications
   let editor
   const app = renderer.createApp({
     setup() {
@@ -131,11 +107,11 @@ function setup(t) {
     },
   })
   app.mount({})
-  t.after(() => app.unmount())
+  cleanups.push(() => app.unmount())
   return { editor, registry, leaves, api, window, notifications }
 }
 
-test('replacing more than the registry capacity reclaims originals and thumbnails', async (t) => {
+it('replacing more than the registry capacity reclaims originals and thumbnails', async (t) => {
   const { editor, registry, notifications } = setup(t)
   await editor.add()
   for (let i = 0; i < 170; i++) {
@@ -154,7 +130,7 @@ test('replacing more than the registry capacity reclaims originals and thumbnail
   assert.equal(notifications.length, 0)
 })
 
-test('clear retains pooled images; style presets preserve empty cells; grid presets populate', async (t) => {
+it('clear retains pooled images; style presets preserve empty cells; grid presets populate', async (t) => {
   const { editor, registry, leaves, notifications } = setup(t)
   await editor.add()
   await editor.add()
@@ -205,27 +181,10 @@ test('clear retains pooled images; style presets preserve empty cells; grid pres
   assert.equal(notifications.length, 0)
 })
 
-test('Compose mode handlers ignore deselection and accept valid layout and units', () => {
-  const { descriptor } = parse(
-    source('src/renderer/components/editor/ComposePanel.vue'),
-  )
-  const compiled = compileScript(descriptor, { id: 'compose-mode-regression' })
+it('compose mode handlers ignore deselection and accept valid layout and units', () => {
   const editor = vue.reactive({ state: defaultsModule.defaults() })
-  const component = evaluate(compiled.content, {
-    '@lucide/vue': {},
-    '@/components/ui/button': {},
-    '@/components/ui/input': {},
-    '@/components/ui/segmented-control': {},
-    '@/composables/useEditor': { useEditorContext: () => editor },
-    '../../../shared/defaults': defaultsModule,
-    '../../../shared/layout': evaluate(source('src/shared/layout.ts')),
-    './CheckField.vue': {},
-    './ChoiceField.vue': {},
-    './NumberField.vue': {},
-    './compose/PhotoList.vue': {},
-    './compose/PrintSettings.vue': {},
-  }).default
-  const controls = component.setup({}, { expose() {} })
+  context.editor = editor
+  const controls = ComposePanel.setup({}, { expose() {} })
   controls.setLayout('grid')
   controls.setUnits('pixels')
   for (const invalid of ['', undefined, [], 'unknown']) {
@@ -234,18 +193,7 @@ test('Compose mode handlers ignore deselection and accept valid layout and units
     assert.equal(editor.state.layout, 'grid')
     assert.equal(editor.state.units, 'pixels')
   }
-  const { descriptor: photoList } = parse(
-    source('src/renderer/components/editor/compose/PhotoList.vue'),
-  )
-  const photosComponent = evaluate(
-    compileScript(photoList, { id: 'photo-list-regression' }).content,
-    {
-      '@lucide/vue': {},
-      '@/components/ui/button': {},
-      '@/composables/useEditor': { useEditorContext: () => editor },
-    },
-  ).default
-  const photoControls = photosComponent.setup({}, { expose() {} })
+  const photoControls = PhotoList.setup({}, { expose() {} })
   editor.state.panels = [{ photoId: 'a' }, { photoId: 'b' }]
   const rows = [
     { offsetTop: 0, offsetHeight: 48 },
@@ -277,7 +225,7 @@ test('Compose mode handlers ignore deselection and accept valid layout and units
   assert.equal(editor.state.units, 'percent')
 })
 
-test('preset changes made during an asynchronous update remain marked unsaved', async (t) => {
+it('preset changes made during an asynchronous update remain marked unsaved', async (t) => {
   const { editor, api } = setup(t)
   await flush()
   let finishSave
@@ -301,38 +249,24 @@ test('preset changes made during an asynchronous update remain marked unsaved', 
 })
 
 async function gridFixture(t, template = '1x2') {
-  const { editor, leaves } = setup(t)
+  const { editor } = setup(t)
   await flush()
   editor.state.layout = 'grid'
   editor.state.grid = defaultsModule.gridTemplate(template)
-  const geometry = evaluate(source('src/shared/layout.ts'))
   const base = await geometry.calculateLayout(editor.state, [])
   editor.preview = { revision: 0, dataUrl: 'data:,', layout: base }
-  const { descriptor } = parse(
-    source('src/renderer/components/editor/PreviewCanvas.vue'),
-  )
-  const compiled = compileScript(descriptor, { id: 'grid-drag-regression' })
   let controls
   const handlers = new Map()
-  const component = evaluate(
-    compiled.content,
-    {
-      '@lucide/vue': {},
-      '@/components/ui/button': {},
-      '@/composables/useEditor': { useEditorContext: () => editor, leaves },
-      '../useEditor': { useEditorContext: () => editor, leaves },
-      '../../../shared/layout': geometry,
-    },
-    {
-      devicePixelRatio: 1,
-      addEventListener: (name, handler) => handlers.set(name, handler),
-      removeEventListener: name => handlers.delete(name),
-    },
-    resolve(__dirname, '../src/renderer/components/editor/PreviewCanvas.vue'),
-  ).default
+  context.editor = editor
+  Object.assign(window, {
+    devicePixelRatio: 1,
+    addEventListener: (name, handler) => handlers.set(name, handler),
+    removeEventListener: name => handlers.delete(name),
+  })
+  const component = PreviewCanvas
   // Run setup inside a component scope, but leave browser-only mount hooks uncalled.
   const scope = vue.effectScope()
-  t.after(() => scope.stop())
+  cleanups.push(() => scope.stop())
   const originalWarn = console.warn
   console.warn = () => {}
   try {
@@ -352,7 +286,7 @@ async function gridFixture(t, template = '1x2') {
   return { editor, controls, handlers, target, base }
 }
 
-test('grid divider uses live geometry without mutating the render model until release', async (t) => {
+it('grid divider uses live geometry without mutating the render model until release', async (t) => {
   const { editor, controls, handlers, target, base } = await gridFixture(t)
   const original = JSON.stringify(editor.state.grid)
   const history = editor.history.length
@@ -391,7 +325,7 @@ test('grid divider uses live geometry without mutating the render model until re
   assert.equal(JSON.stringify(editor.state.grid), original)
 })
 
-test('Option divider snaps with hysteresis, reports percentages and preserves the other segment', async (t) => {
+it('option divider snaps with hysteresis, reports percentages and preserves the other segment', async (t) => {
   const { controls, handlers, target } = await gridFixture(t, '2x2')
   const divider = controls.dividers.value.find(
     item => item.node.axis === 'horizontal',
@@ -450,7 +384,7 @@ test('Option divider snaps with hysteresis, reports percentages and preserves th
   assert.equal(controls.dividerFeedback.value, null)
 })
 
-test('Option on a through divider splits the hovered segment and cancellation restores the tree', async (t) => {
+it('option on a through divider splits the hovered segment and cancellation restores the tree', async (t) => {
   const { editor, controls, handlers, target } = await gridFixture(t, '2x2')
   const original = JSON.stringify(editor.state.grid)
   const divider = controls.dividers.value.find(
@@ -491,7 +425,7 @@ test('Option on a through divider splits the hovered segment and cancellation re
   assert.equal(controls.draftGrid.value, null)
 })
 
-test('spacing drag updates exact local geometry without native renders until release', async (t) => {
+it('spacing drag updates exact local geometry without native renders until release', async (t) => {
   const { editor, api } = setup(t)
   await editor.add()
   await new Promise(resolve => setTimeout(resolve, 20))
@@ -512,9 +446,10 @@ test('spacing drag updates exact local geometry without native renders until rel
     editor.state.percent.gap = value
     editor.state.percent.frame = value
     await new Promise(resolve => setTimeout(resolve, 20))
-    const expected = await evaluate(
-      source('src/shared/layout.ts'),
-    ).calculateLayout(editor.state, Object.values(editor.photos))
+    const expected = await geometry.calculateLayout(
+      editor.state,
+      Object.values(editor.photos),
+    )
     assert.deepEqual(
       JSON.parse(JSON.stringify(editor.interactivePreview.layout)),
       JSON.parse(JSON.stringify(expected)),
@@ -532,7 +467,7 @@ test('spacing drag updates exact local geometry without native renders until rel
   assert.equal(editor.interactivePreview, null)
 })
 
-test('imported thumbnails appear before native preview finishes', async (t) => {
+it('imported thumbnails appear before native preview finishes', async (t) => {
   const { editor, api } = setup(t)
   let complete
   const render = api.preview
@@ -551,7 +486,7 @@ test('imported thumbnails appear before native preview finishes', async (t) => {
   assert.equal(editor.interactivePreview, null)
 })
 
-test('caption spacing keeps updating during the gesture without starving the renderer', async (t) => {
+it('caption spacing keeps updating during the gesture without starving the renderer', async (t) => {
   const { editor, api } = setup(t)
   await editor.add()
   await new Promise(resolve => setTimeout(resolve, 50))
@@ -584,7 +519,7 @@ test('caption spacing keeps updating during the gesture without starving the ren
   assert.equal(editor.rendering, false)
 })
 
-test('an in-flight native render cannot replace newer local spacing geometry', async (t) => {
+it('an in-flight native render cannot replace newer local spacing geometry', async (t) => {
   const { editor, api } = setup(t)
   await editor.add()
   await new Promise(resolve => setTimeout(resolve, 50))
@@ -605,7 +540,7 @@ test('an in-flight native render cannot replace newer local spacing geometry', a
   assert.equal(JSON.stringify(editor.interactivePreview.layout), geometry)
 })
 
-test('Escape clears cell selection and returns focus to the canvas', async (t) => {
+it('escape clears cell selection and returns focus to the canvas', async (t) => {
   const { editor, controls } = await gridFixture(t)
   editor.selected = [controls.layout.value.cells[0].id]
   let focused = false
@@ -620,7 +555,7 @@ test('Escape clears cell selection and returns focus to the canvas', async (t) =
   controls.viewport.value = null
 })
 
-test('background press clears selection without intercepting cell controls', async (t) => {
+it('background press clears selection without intercepting cell controls', async (t) => {
   const { editor, controls } = await gridFixture(t)
   const id = controls.layout.value.cells[0].id
   let focused = 0
@@ -645,7 +580,7 @@ test('background press clears selection without intercepting cell controls', asy
   controls.viewport.value = null
 })
 
-test('drop highlight survives child transitions and clears on leave or drag end', async (t) => {
+it('drop highlight survives child transitions and clears on leave or drag end', async (t) => {
   const { controls } = await gridFixture(t)
   controls.dropTarget.value = 'target'
   controls.leaveCell({
@@ -665,7 +600,7 @@ test('drop highlight survives child transitions and clears on leave or drag end'
   assert.equal(controls.dropTarget.value, '')
 })
 
-test('caption typing publishes layered previews during continuous input and finishes with latest text', async (t) => {
+it('caption typing publishes layered previews during continuous input and finishes with latest text', async (t) => {
   const { editor, api } = setup(t)
   await editor.add()
   await new Promise(resolve => setTimeout(resolve, 30))
@@ -680,7 +615,7 @@ test('caption typing publishes layered previews during continuous input and fini
         published.push(value.annotationLayers[0].dataUrl)
     },
   )
-  t.after(stop)
+  t.onTestFinished(stop)
   api.preview = async (snapshot, size, region, annotationsOnly) => {
     assert.equal(annotationsOnly, true)
     maxActive = Math.max(maxActive, ++active)
@@ -712,7 +647,7 @@ test('caption typing publishes layered previews during continuous input and fini
   )
 })
 
-test('render indicator ignores short work and appears only after the delay', async (t) => {
+it('render indicator ignores short work and appears only after the delay', async (t) => {
   const { editor, controls } = await gridFixture(t)
   editor.rendering = true
   await flush()
@@ -729,9 +664,11 @@ test('render indicator ignores short work and appears only after the delay', asy
   assert.equal(controls.showRendering.value, false)
 })
 
-test('editor grid history and presets remain isolated across instances', async (t) => {
+it('editor grid history and presets remain isolated across instances', async (t) => {
   const first = setup(t)
   const second = setup(t)
+  vi.stubGlobal('window', first.window)
+  context.notifications = first.notifications
   await first.editor.add()
   first.editor.state.layout = 'grid'
   first.editor.template('1x2')
@@ -752,7 +689,7 @@ test('editor grid history and presets remain isolated across instances', async (
   assert.equal(second.notifications.length, 0)
 })
 
-test('preview completed before decode cannot replace newer geometry after decode', async (t) => {
+it('preview completed before decode cannot replace newer geometry after decode', async (t) => {
   const { editor, api, window } = setup(t)
   await editor.add()
   await new Promise(resolve => setTimeout(resolve, 50))
@@ -783,7 +720,7 @@ test('preview completed before decode cannot replace newer geometry after decode
   assert.equal(JSON.stringify(editor.interactivePreview.layout), geometry)
 })
 
-test('viewport reacts to zoom and rejects regions superseded by pan or revision', async (t) => {
+it('viewport reacts to zoom and rejects regions superseded by pan or revision', async () => {
   const output = {
     width: 2000,
     height: 1000,
@@ -807,22 +744,19 @@ test('viewport reacts to zoom and rejects regions superseded by pan or revision'
     },
   })
   const pending = []
-  const { usePreviewViewport } = evaluate(
-    source('src/renderer/composables/preview/usePreviewViewport.ts'),
-    { '../useEditor': { useEditorContext: () => editor } },
-    {
-      devicePixelRatio: 1,
-      poliframe: {
-        preview: (snapshot, maxSize, region) =>
-          new Promise((complete) => {
-            pending.push({ snapshot, region, complete })
-          }),
-      },
+  context.editor = editor
+  vi.stubGlobal('window', {
+    devicePixelRatio: 1,
+    poliframe: {
+      preview: (snapshot, maxSize, region) =>
+        new Promise((complete) => {
+          pending.push({ snapshot, region, complete })
+        }),
     },
-  )
+  })
   const zoom = vue.ref(null)
   const scope = vue.effectScope()
-  t.after(() => scope.stop())
+  cleanups.push(() => scope.stop())
   const originalWarn = console.warn
   console.warn = () => {}
   let controls
@@ -880,7 +814,7 @@ test('viewport reacts to zoom and rejects regions superseded by pan or revision'
   assert.equal(controls.regionPreview.value, null)
 })
 
-test('export cancellation is silent and successful exports use Sonner', async (t) => {
+it('export cancellation is silent and successful exports use Sonner', async (t) => {
   const { editor, api, notifications } = setup(t)
   await editor.add()
   api.exportImage = async () => ({ status: 'cancelled' })
@@ -893,15 +827,24 @@ test('export cancellation is silent and successful exports use Sonner', async (t
   assert.equal(notifications.at(-1).options.description, '/tmp/photo.jpg')
   editor.fail(new Error('Import failed'))
   editor.fail(new Error('Render failed'))
-  assert.equal(notifications.at(-1).options.id, notifications.at(-2).options.id)
+  assert.equal(
+    notifications.at(-1).options.id,
+    notifications.at(-2).options.id,
+  )
 })
 
-test('print badge calculates paper DPI instead of exposing stale export metadata', () => {
-  const { descriptor } = parse(source('src/renderer/components/editor/compose/PrintSettings.vue'))
-  const compiled = compileScript(descriptor, { id: 'print-dpi' })
+it('print badge calculates paper DPI instead of exposing stale export metadata', () => {
   const editor = vue.reactive({
     state: defaultsModule.defaults(),
-    preview: { layout: { width: 3000, height: 2000, nativeWidth: 3000, nativeHeight: 2000, dpi: 72 } },
+    preview: {
+      layout: {
+        width: 3000,
+        height: 2000,
+        nativeWidth: 3000,
+        nativeHeight: 2000,
+        dpi: 72,
+      },
+    },
     interactivePreview: null,
   })
   editor.state.panels = [{ photoId: 'photo' }]
@@ -909,16 +852,8 @@ test('print badge calculates paper DPI instead of exposing stale export metadata
   editor.state.print.height = 15
   editor.state.print.units = 'in'
   editor.state.print.orientation = 'auto'
-  const component = evaluate(compiled.content, {
-    '@lucide/vue': {},
-    '@/components/ui/input': {},
-    '@/components/ui/segmented-control': {},
-    '@/composables/useEditor': { useEditorContext: () => editor },
-    '../../../../shared/layout': evaluate(source('src/shared/layout.ts')),
-    '../CheckField.vue': {},
-    '../ChoiceField.vue': {},
-  }).default
-  const { printInfo } = component.setup({}, { expose() {} })
+  context.editor = editor
+  const { printInfo } = PrintSettings.setup({}, { expose() {} })
   assert.equal(printInfo.value, null)
   editor.state.print.enabled = true
   assert.equal(printInfo.value.dpi, 200)
@@ -929,6 +864,8 @@ test('print badge calculates paper DPI instead of exposing stale export metadata
   editor.state.print.width = 5
   editor.state.print.height = 10
   assert.equal(printInfo.value.dpi, 300)
-  editor.interactivePreview = { layout: { ...editor.preview.layout, width: 4000 } }
+  editor.interactivePreview = {
+    layout: { ...editor.preview.layout, width: 4000 },
+  }
   assert.equal(printInfo.value.dpi, 400)
 })
