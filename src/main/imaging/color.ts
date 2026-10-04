@@ -1,8 +1,10 @@
 import type { Buffer } from 'node:buffer'
 import type { Sharp } from 'sharp'
+import type { Composition } from '../../shared/contracts'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import process from 'node:process'
 import { ExifTool } from 'exiftool-vendored'
 import sharp from 'sharp'
 import { MAX_IMAGE_PIXELS } from './index'
@@ -75,4 +77,15 @@ export async function toWorkingPipeline(
 
 export async function toWorkingImage(input: string | Buffer): Promise<Buffer> {
   return (await toWorkingPipeline(input)).toBuffer()
+}
+
+export function outputProfile(
+  profile: Composition['output']['profile'],
+  resources: string,
+): string {
+  return profile === 'adobe'
+    ? process.platform === 'darwin'
+      ? '/System/Library/ColorSync/Profiles/AdobeRGB1998.icc'
+      : join(resources, 'profiles/AdobeRGB1998.icc')
+    : profile
 }

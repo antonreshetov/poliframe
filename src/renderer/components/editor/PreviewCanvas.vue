@@ -113,9 +113,11 @@ const compositionImageStyle = computed(() => {
   }
 })
 function liveCellSource(cell: Rect & { photoId: string | null }) {
-  return (e.interactivePreview ?? dragBacking.value)?.gestureImages?.find(
-    item => item.photoId === cell.photoId,
-  )
+  return (
+    e.interactivePreview
+    ?? dragBacking.value
+    ?? e.preview
+  )?.gestureImages?.find(item => item.photoId === cell.photoId)
 }
 function liveCellImage(cell: Rect & { photoId: string | null }) {
   const image = liveCellSource(cell)

@@ -34,6 +34,13 @@ export function usePreviewViewport({
   }
   let observer: ResizeObserver
   let regionGeneration = 0
+  let stateKey = ''
+  let currentKey = ''
+  let completed: { key: string, result: PreviewResult } | undefined
+  let pending:
+    { key: string, request: number, promise: Promise<void> } | undefined
+  let disposed = false
+  let requestSequence = 0
   let regionTimer: ReturnType<typeof setTimeout>
   onMounted(() => {
     window.addEventListener('resize', updateDpr)
@@ -54,6 +61,9 @@ export function usePreviewViewport({
     window.removeEventListener('resize', updateDpr)
     clearTimeout(regionTimer)
     regionGeneration++
+    disposed = true
+    completed = undefined
+    pending = undefined
   })
   const fitScale = computed(() =>
     !layout.value
@@ -191,58 +201,136 @@ export function usePreviewViewport({
       scale,
     ],
     () => {
-      const generation = ++regionGeneration
+      const nextStateKey = JSON.stringify([e.state, e.renderRevision])
+      if (nextStateKey !== stateKey) {
+        stateKey = nextStateKey
+        regionGeneration++
+        completed = undefined
+        pending = undefined
+      }
+      const generation = regionGeneration
       clearTimeout(regionTimer)
       regionPreview.value = null
       regionRendering.value = false
+      currentKey = ''
       const region = visibleRegion.value
       const backing = e.preview
       if (!regionAllowed.value || !region || !backing)
         return
-      regionRendering.value = true
       const revision = backing.revision
       const snapshot = JSON.parse(JSON.stringify(e.state))
       snapshot.revision = revision
+      // Reserve decoded CPU/GPU pixels and a conservative data-URL allowance.
+      const budgetEdge = Math.floor(
+        Math.max(region.width, region.height)
+        * Math.min(
+          1,
+          Math.sqrt((64 * 1024 * 1024) / 24 / (region.width * region.height)),
+        ),
+      )
       const maxSize = Math.round(
         Math.max(
-          400,
+          1,
           Math.min(
-            3200,
-            Math.max(region.width, region.height) * scale.value * dpr.value,
+            budgetEdge,
+            Math.max(
+              400,
+              Math.min(
+                3200,
+                Math.max(region.width, region.height) * scale.value * dpr.value,
+              ),
+            ),
           ),
         ),
       )
-      regionTimer = setTimeout(async () => {
-        try {
-          const result = await window.poliframe.preview(
-            snapshot,
-            maxSize,
-            region,
-          )
-          if (generation !== regionGeneration)
-            return
-          if (typeof window.Image === 'function') {
-            const image = new window.Image()
-            image.src = result.dataUrl
-            await image.decode()
+      const key = JSON.stringify([stateKey, region, maxSize])
+      currentKey = key
+      if (completed?.key === key) {
+        if (pending && pending.key !== key) {
+          requestSequence++
+          pending = undefined
+        }
+        regionPreview.value = completed.result
+        return
+      }
+      regionRendering.value = true
+      if (pending?.key === key)
+        return
+      regionTimer = setTimeout(() => {
+        const request = ++requestSequence
+        const promise = (async () => {
+          try {
+            const result = await window.poliframe.preview(
+              snapshot,
+              maxSize,
+              region,
+            )
+            if (
+              disposed
+              || generation !== regionGeneration
+              || request !== requestSequence
+              || result.revision !== revision
+            ) {
+              return
+            }
+            const factor = Math.min(
+              1,
+              maxSize / Math.max(region.width, region.height),
+            )
+            const expectedPixels
+              = Math.ceil(region.width * factor)
+                * Math.ceil(region.height * factor)
+            if (
+              result.dataUrl.length * 2 + expectedPixels * 8
+              > 64 * 1024 * 1024
+            ) {
+              throw new Error('Preview region exceeds the memory budget')
+            }
+            // The single ROI allowance covers both displayed and cached pixels.
+            completed = undefined
+            const image
+              = typeof window.Image === 'function'
+                ? new window.Image()
+                : undefined
+            if (image) {
+              image.src = result.dataUrl
+              await image.decode()
+            }
+            if (
+              disposed
+              || generation !== regionGeneration
+              || request !== requestSequence
+            ) {
+              return
+            }
+            const pixels
+              = image?.naturalWidth && image.naturalHeight
+                ? image.naturalWidth * image.naturalHeight
+                : Math.ceil(region.width * factor)
+                  * Math.ceil(region.height * factor)
+            const cost = result.dataUrl.length * 2 + pixels * 8
+            if (cost <= 64 * 1024 * 1024)
+              completed = { key, result }
+            if (currentKey === key && regionAllowed.value)
+              regionPreview.value = result
           }
-          if (
-            generation === regionGeneration
-            && revision === e.renderRevision
-            && result.revision === revision
-            && e.preview?.revision === revision
-          ) {
-            regionPreview.value = result
+          catch (error) {
+            if (
+              !disposed
+              && generation === regionGeneration
+              && currentKey === key
+            ) {
+              e.fail(error)
+            }
           }
-        }
-        catch (error) {
-          if (generation === regionGeneration)
-            e.fail(error)
-        }
-        finally {
-          if (generation === regionGeneration)
-            regionRendering.value = false
-        }
+          finally {
+            if (pending?.request === request)
+              pending = undefined
+            if (currentKey === key && request === requestSequence)
+              regionRendering.value = false
+          }
+        })()
+        pending = { key, request, promise }
       }, 180)
     },
     { deep: true, flush: 'sync' },

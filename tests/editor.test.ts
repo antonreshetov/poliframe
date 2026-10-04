@@ -888,7 +888,7 @@ it.each([false, true])(
       poliframe: {
         preview: (snapshot, maxSize, region) =>
           new Promise((complete) => {
-            pending.push({ snapshot, region, complete })
+            pending.push({ snapshot, maxSize, region, complete })
           }),
       },
     })
@@ -977,36 +977,111 @@ it.each([false, true])(
     assert.equal(pending.length, 3, 'spacing must not schedule a new region')
     editor.spacingEditing = false
     await new Promise(resolve => setTimeout(resolve, 200))
-    assert.equal(pending.length, 4)
+    assert.equal(pending.length, 3, 'unchanged spacing reuses completed ROI')
+    assert.equal(controls.regionPreview.value.dataUrl, 'current')
     editor.interactivePreview = { ...editor.preview }
+    assert.equal(controls.regionPreview.value, null)
+    assert.equal(controls.regionAllowed.value, false)
+    editor.interactivePreview = annotations ? editor.preview : null
+    await flush()
+    assert.equal(controls.regionPreview.value.dataUrl, 'current')
+    assert.equal(controls.regionRendering.value, false)
+    resizing.value = true
+    assert.equal(controls.regionPreview.value, null)
+    assert.equal(controls.regionAllowed.value, false)
+    resizing.value = false
+    controls.pan.value = { x: 0, y: 0 }
+    zoom.value = null
+    zoom.value = 100
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.equal(pending.length, 4)
+    zoom.value = null
+    zoom.value = 100
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.equal(pending.length, 4, 'identical in-flight ROI is deduplicated')
+    zoom.value = null
     pending[3].complete({
       revision: 2,
       region: pending[3].region,
-      dataUrl: 'stale-interaction',
+      dataUrl: 'fit-completed',
       layout: output,
     })
     await flush()
-    assert.equal(controls.regionPreview.value, null)
     assert.equal(
-      controls.regionAllowed.value,
-      false,
-      'a temporary interactive preview blocks ROI',
+      controls.regionPreview.value,
+      null,
+      'completion during Fit stays hidden',
     )
-    editor.interactivePreview = annotations ? editor.preview : null
-    await new Promise(resolve => setTimeout(resolve, 200))
-    assert.equal(pending.length, 5)
-    assert.equal(controls.regionRendering.value, true)
-    resizing.value = true
+    zoom.value = 100
+    await flush()
+    assert.equal(controls.regionPreview.value.dataUrl, 'fit-completed')
     assert.equal(controls.regionRendering.value, false)
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.equal(
+      pending.length,
+      4,
+      'Fit roundtrip reuses completed ROI without IPC',
+    )
+    const failures = []
+    editor.fail = error => failures.push(error)
+    let decodes = 0
+    window.Image = class {
+      decode() {
+        decodes++
+        return Promise.resolve()
+      }
+    }
+    controls.pan.value = { x: 40, y: 0 }
+    await new Promise(resolve => setTimeout(resolve, 200))
     pending[4].complete({
       revision: 2,
       region: pending[4].region,
-      dataUrl: 'stale-resize',
+      dataUrl: 'x'.repeat(33 * 1024 * 1024),
       layout: output,
     })
     await flush()
+    assert.equal(decodes, 0, 'oversized payload is rejected before decode')
+    assert.equal(failures.length, 1)
     assert.equal(controls.regionPreview.value, null)
-    assert.equal(controls.regionAllowed.value, false)
+    assert.equal(controls.regionRendering.value, false)
+    zoom.value = null
+    zoom.value = 100
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.equal(
+      pending.length,
+      6,
+      'failed or oversized regions are not cached',
+    )
+    pending[5].complete({
+      revision: 2,
+      region: pending[5].region,
+      dataUrl: 'retry',
+      layout: output,
+    })
+    await flush()
+    assert.equal(decodes, 1)
+    assert.equal(controls.regionPreview.value.dataUrl, 'retry')
+    controls.pan.value = { x: 60, y: 0 }
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.equal(pending.length, 7)
+    controls.pan.value = { x: 40, y: 0 }
+    assert.equal(controls.regionPreview.value.dataUrl, 'retry')
+    pending[6].complete({
+      revision: 2,
+      region: pending[6].region,
+      dataUrl: 'superseded-by-cache',
+      layout: output,
+    })
+    await flush()
+    assert.equal(
+      decodes,
+      1,
+      'returning to a cached ROI prevents another ROI from decoding',
+    )
+    zoom.value = null
+    zoom.value = 100
+    await flush()
+    assert.equal(controls.regionPreview.value.dataUrl, 'retry')
     zoom.value = null
     await flush()
     assert.equal(controls.scale.value, fitScale)
@@ -1156,4 +1231,56 @@ it('gesture acknowledgment advances only after successful publication and reuses
   await new Promise(resolve => setTimeout(resolve, 30))
   assert.equal(keys.at(-1), 'b'.repeat(64))
   assert.equal(editor.preview.gestureImagesKey, contentKey)
+})
+
+it('normal preview always requests a scene and keeps photo layers without captions', async (t) => {
+  const { editor, api } = setup(t)
+  api.preview = async (snapshot, _size, region, annotationsOnly) => {
+    assert.equal(annotationsOnly, true)
+    assert.equal(region, undefined)
+    return {
+      revision: snapshot.revision,
+      layout: await geometry.calculateLayout(
+        snapshot,
+        Object.values(editor.photos),
+      ),
+      dataUrl: '',
+      annotationLayers: [],
+      gestureImages: snapshot.panels.map(panel => ({
+        photoId: panel.photoId,
+        width: 100,
+        height: 100,
+        dataUrl: 'data:,photo',
+      })),
+    }
+  }
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 60))
+  assert.equal(editor.preview.dataUrl, '')
+  assert.equal(editor.interactivePreview, editor.preview)
+  assert.equal(editor.interactivePreview.gestureImages.length, 1)
+})
+
+it('local geometry refuses oversized mounted thumbnail copies until the bounded scene arrives', async (t) => {
+  const { editor, api } = setup(t)
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 60))
+  const photoId = editor.state.panels[0].photoId
+  editor.photos[photoId].width = 6000
+  editor.photos[photoId].height = 6000
+  api.preview = () => new Promise(() => {})
+  editor.state.layout = 'grid'
+  editor.state.grid = {
+    id: 'copies',
+    type: 'split',
+    axis: 'horizontal',
+    weights: Array.from({ length: 128 }).fill(1),
+    children: Array.from({ length: 128 }, (_, i) => ({
+      id: `copy-${i}`,
+      type: 'leaf',
+      photoId,
+    })),
+  }
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(editor.interactivePreview, null)
 })

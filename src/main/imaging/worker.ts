@@ -1,9 +1,8 @@
 import type { Composition, Rect } from '../../shared/contracts'
 import type { Asset } from '../services/assets'
-import path from 'node:path'
-import process from 'node:process'
 import { parentPort } from 'node:worker_threads'
 import { annotationPreview } from './annotations'
+import { outputProfile } from './color'
 import { compose, gesturePreview } from './composition'
 import { exportImage } from './index'
 
@@ -40,14 +39,13 @@ parentPort!.on(
         job.type === 'preview' ? job.maxSize : undefined,
         job.type === 'preview' ? job.region : undefined,
       )
+      const profilePath = outputProfile(
+        job.snapshot.output.profile,
+        job.resources,
+      )
       const profile
         = job.snapshot.output.profile === 'adobe'
-          ? {
-              path:
-                process.platform === 'darwin'
-                  ? '/System/Library/ColorSync/Profiles/AdobeRGB1998.icc'
-                  : path.join(job.resources, 'profiles/AdobeRGB1998.icc'),
-            }
+          ? { path: profilePath }
           : job.snapshot.output.profile
       if (job.type === 'preview') {
         const data = await pipeline
@@ -66,7 +64,11 @@ parentPort!.on(
                   job.snapshot,
                   job.assets,
                   job.knownGestureImagesKey,
-                  { layout, maxSize: job.maxSize ?? 2200 },
+                  {
+                    layout,
+                    maxSize: job.maxSize ?? 2200,
+                    resources: job.resources,
+                  },
                 )),
             dataUrl: `data:image/jpeg;base64,${data.toString('base64')}`,
             layout,

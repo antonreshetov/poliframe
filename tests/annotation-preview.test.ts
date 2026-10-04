@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import sharp from 'sharp'
-import { it } from 'vitest'
+import { it, onTestFinished } from 'vitest'
 
 import { annotationPreview } from '../src/main/imaging/annotations.ts'
 import { compose, gesturePreview } from '../src/main/imaging/composition.ts'
@@ -197,3 +197,155 @@ it('caption lines reuse unchanged pixels while isolating font, color, width, sca
     }
   }
 })
+
+it('scene without annotations publishes photo layers without a composed JPEG', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'poliframe-scene-'))
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'photo.png')
+  await sharp({
+    create: { width: 80, height: 60, channels: 3, background: '#906030' },
+  })
+    .png()
+    .toFile(path)
+  const photo = {
+    id: 'photo',
+    name: 'photo',
+    path,
+    width: 80,
+    height: 60,
+    exif: {},
+  }
+  const snapshot = defaults()
+  snapshot.panels = [{ photoId: photo.id, transform: identityTransform() }]
+  const result = await annotationPreview(
+    snapshot,
+    [photo],
+    resolve('resources'),
+    800,
+  )
+  assert.equal(result.dataUrl, '')
+  assert.deepEqual(result.annotationLayers, [])
+  assert.equal(result.gestureImages.length, 1)
+  assert.deepEqual(
+    (
+      await annotationPreview(
+        snapshot,
+        [photo],
+        resolve('resources'),
+        800,
+        result.gestureImagesKey,
+      )
+    ).gestureImages,
+    undefined,
+  )
+  snapshot.mat = '#336699'
+  assert.deepEqual(
+    (
+      await annotationPreview(
+        snapshot,
+        [photo],
+        resolve('resources'),
+        800,
+        result.gestureImagesKey,
+      )
+    ).gestureImages,
+    undefined,
+    'opaque photo payload is independent of mat',
+  )
+})
+
+it.each(['srgb', 'p3'] as const)(
+  'transparent photo layers reveal the colored mat like the compositor (%s)',
+  async (profile) => {
+    const directory = await mkdtemp(join(tmpdir(), 'poliframe-scene-alpha-'))
+    onTestFinished(() => rm(directory, { recursive: true, force: true }))
+    const width = 80
+    const height = 60
+    const pixels = Buffer.alloc(width * height * 4)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const offset = (y * width + x) * 4
+        pixels.set(
+          [210, 70, 30, x < width / 3 ? 0 : x < (width * 2) / 3 ? 128 : 255],
+          offset,
+        )
+      }
+    }
+    const path = join(directory, 'transparent.png')
+    await sharp(pixels, { raw: { width, height, channels: 4 } })
+      .withIccProfile('srgb')
+      .png()
+      .toFile(path)
+    const photo = { id: 'photo', name: 'photo', path, width, height, exif: {} }
+    const snapshot = defaults()
+    snapshot.panels = [{ photoId: photo.id, transform: identityTransform() }]
+    snapshot.mat = '#336699'
+    snapshot.output.profile = profile
+    const scene = await annotationPreview(
+      snapshot,
+      [photo],
+      resolve('resources'),
+      800,
+    )
+    const changedMat = { ...snapshot, mat: '#996633' }
+    const changed = await annotationPreview(
+      changedMat,
+      [photo],
+      resolve('resources'),
+      800,
+      scene.gestureImagesKey,
+    )
+    assert.notEqual(changed.gestureImagesKey, scene.gestureImagesKey)
+    assert.ok(changed.gestureImages)
+    assert.notEqual(
+      changed.gestureImages[0].dataUrl,
+      scene.gestureImages[0].dataUrl,
+    )
+    const image = scene.gestureImages[0]
+    assert.match(image.dataUrl, /^data:image\/png;/)
+    const bytes = Buffer.from(image.dataUrl.split(',')[1], 'base64')
+    assert.equal((await sharp(bytes).metadata()).hasAlpha, true)
+    const layerOverMat = await sharp(bytes)
+      .flatten({ background: snapshot.mat })
+      .removeAlpha()
+      .raw()
+      .toBuffer()
+    const exact = await compose(snapshot, [photo], resolve('resources'))
+    const output = await exact.pipeline
+      .withIccProfile('srgb')
+      .toColourspace('srgb')
+      .png()
+      .toBuffer()
+    const cell = exact.layout.cells[0]
+    for (const fraction of [0.15, 0.5, 0.85]) {
+      const reference = await sharp(output)
+        .extract({
+          left: Math.round(cell.x + cell.width * fraction),
+          top: Math.round(cell.y + cell.height / 2),
+          width: 1,
+          height: 1,
+        })
+        .removeAlpha()
+        .raw()
+        .toBuffer()
+      const index
+        = (Math.floor(image.height / 2) * image.width
+          + Math.floor(image.width * fraction))
+        * 3
+      const actual = layerOverMat.subarray(index, index + 3)
+      if (fraction === 0.5 && profile === 'srgb') {
+        assert.deepEqual(
+          actual,
+          reference,
+          'semi-transparent pixels use the exact working-space blend',
+        )
+      }
+      assert.ok(
+        actual.every(
+          (value, channel) => Math.abs(value - reference[channel]) <= 1,
+        ),
+        `mat/photo sample ${fraction}: ${Array.from(actual)} vs ${Array.from(reference)}`,
+      )
+    }
+  },
+)

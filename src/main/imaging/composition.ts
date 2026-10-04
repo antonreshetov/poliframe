@@ -13,8 +13,8 @@ import { stat } from 'node:fs/promises'
 import sharp from 'sharp'
 import { calculateLayout, effectiveSize } from '../../shared/layout'
 import { createCaptionRenderer } from './captions'
-import { toWorkingImage, toWorkingPipeline } from './color'
-import { openImage, validateDimensions } from './index'
+import { outputProfile, toWorkingImage, toWorkingPipeline } from './color'
+import { MAX_IMAGE_PIXELS, openImage, validateDimensions } from './index'
 import { PreviewCache } from './preview-cache'
 
 const previewSources = new PreviewCache(96 * 1024 * 1024)
@@ -100,7 +100,11 @@ export function previewSourceSize(
   )
 }
 
-async function previewSource(asset: ImageAsset, sourceSize: number) {
+async function previewSource(
+  asset: ImageAsset,
+  sourceSize: number,
+  fast = false,
+) {
   const info = await stat(asset.path)
   const identity = JSON.stringify([
     asset.path,
@@ -114,8 +118,41 @@ async function previewSource(asset: ImageAsset, sourceSize: number) {
     bucket,
     load: () =>
       bucket
-        ? previewSources.get(`${identity}:${bucket}`, async () =>
-            (await toWorkingPipeline(asset.path))
+        ? previewSources.get(`${identity}:${bucket}:${fast}`, async () => {
+            let input: string | Buffer = asset.path
+            if (fast) {
+              const options = {
+                limitInputPixels: MAX_IMAGE_PIXELS,
+                failOn: 'error' as const,
+                pages: 1,
+              }
+              const metadata = await sharp(asset.path, options).metadata()
+              if (
+                metadata.hasProfile
+                && metadata.depth === 'uchar'
+                && ['srgb', 'rgb'].includes(metadata.space)
+              ) {
+                const oriented = metadata.autoOrient
+                const factor = Math.min(
+                  1,
+                  bucket / Math.max(oriented.width, oriented.height),
+                )
+                input = await sharp(asset.path, options)
+                  .autoOrient()
+                  .keepIccProfile()
+                  .resize(
+                    Math.max(1, Math.round(oriented.width * factor)),
+                    Math.max(1, Math.round(oriented.height * factor)),
+                    {
+                      fit: 'fill',
+                      fastShrinkOnLoad: false,
+                    },
+                  )
+                  .tiff({ compression: 'none' })
+                  .toBuffer()
+              }
+            }
+            return (await toWorkingPipeline(input))
               .resize({
                 width: bucket,
                 height: bucket,
@@ -123,7 +160,8 @@ async function previewSource(asset: ImageAsset, sourceSize: number) {
                 withoutEnlargement: true,
               })
               .tiff({ compression: 'none' })
-              .toBuffer())
+              .toBuffer()
+          })
         : undefined,
   }
 }
@@ -169,12 +207,14 @@ function visiblePanels(snapshot: Composition) {
 interface GesturePreviewContext {
   layout: LayoutResult
   maxSize: number
+  resources?: string
 }
 
 function gestureSize(
   asset: ImageAsset,
   transform: Transform,
   context?: GesturePreviewContext,
+  hasAlpha = false,
 ) {
   const effective = effectiveSize(asset, transform)
   const longest = Math.max(effective.width, effective.height)
@@ -199,6 +239,19 @@ function gestureSize(
     )
     edge = [512, 1024, 2200].find(size => size >= required) ?? 2200
   }
+  // 80 MiB of the 96 MiB scene allowance: decoded CPU/GPU pixels plus
+  // encoded strings, conservatively counting repeated mounted photo cells.
+  if (context) {
+    const cells = Math.max(
+      1,
+      context.layout.cells.filter(cell => cell.photoId).length,
+    )
+    const pixelBudget = (80 * 1024 * 1024) / (hasAlpha ? 24 : 16) / cells
+    const budgetEdge = Math.floor(
+      longest * Math.sqrt(pixelBudget / (effective.width * effective.height)),
+    )
+    edge = Math.min(edge, Math.max(1, budgetEdge))
+  }
   const factor = Math.min(1, edge / longest)
   return {
     width: Math.max(1, Math.round(effective.width * factor)),
@@ -220,7 +273,15 @@ export async function gesturePreview(
       if (!asset)
         throw new Error(`Grid image is unavailable: ${panel.photoId}`)
       const info = await stat(asset.path)
-      const { width, height } = gestureSize(asset, panel.transform, context)
+      const hasAlpha = context
+        ? (await sharp(asset.path).metadata()).hasAlpha
+        : false
+      const { width, height } = gestureSize(
+        asset,
+        panel.transform,
+        context,
+        hasAlpha,
+      )
       const { rotation, flipX, flipY, crop } = panel.transform
       return [
         panel.photoId,
@@ -239,11 +300,19 @@ export async function gesturePreview(
         crop.height,
         width,
         height,
+        hasAlpha ? snapshot.mat : undefined,
       ]
     }),
   )
   const gestureImagesKey = createHash('sha256')
-    .update(JSON.stringify(identities))
+    .update(
+      JSON.stringify([
+        'alpha-mat-v2',
+        !!context,
+        snapshot.output.profile,
+        identities,
+      ]),
+    )
     .digest('hex')
   return {
     gestureImagesKey,
@@ -266,10 +335,14 @@ export async function gestureImages(
     const asset = assets.find(item => item.id === panel.photoId)
     if (!asset)
       continue
+    const hasAlpha = context
+      ? (await sharp(asset.path).metadata()).hasAlpha
+      : false
     const { width, height, edge } = gestureSize(
       asset,
       panel.transform,
       context,
+      hasAlpha,
     )
     const info = await stat(asset.path)
     const key = JSON.stringify([
@@ -278,6 +351,10 @@ export async function gestureImages(
       info.mtimeMs,
       info.ctimeMs,
       panel.transform,
+      snapshot.output.profile,
+      'alpha-mat-v2',
+      !!context,
+      hasAlpha ? snapshot.mat : undefined,
       width,
       height,
     ])
@@ -286,6 +363,7 @@ export async function gestureImages(
         asset,
         edge
         / Math.min(panel.transform.crop.width, panel.transform.crop.height),
+        !!context,
       )
       // This intermediate is consumed immediately; keep compressed tiles out of
       // this path without retaining large uncompressed buffers in previewTiles.
@@ -298,17 +376,41 @@ export async function gestureImages(
         await source.load(),
         'none',
       )
-      return openImage(tile)
-        .withIccProfile('srgb')
+      let pipeline = openImage(tile)
+      if (hasAlpha) {
+        // Match the exact compositor's P3 blend before the display transform.
+        const matte = await toWorkingImage(
+          await sharp({
+            create: {
+              width: 1,
+              height: 1,
+              channels: 3,
+              background: snapshot.mat,
+            },
+          })
+            .png()
+            .toBuffer(),
+        )
+        pipeline = openImage(matte)
+          .resize(width, height, { fit: 'fill' })
+          .pipelineColourspace('rgb16')
+          .composite([{ input: tile, left: 0, top: 0 }])
+      }
+      const output = pipeline
+        .withIccProfile(
+          outputProfile(snapshot.output.profile, context?.resources ?? ''),
+        )
         .toColourspace('srgb')
-        .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
-        .toBuffer()
+      return (await sharp(tile).metadata()).hasAlpha
+        ? output.png().toBuffer()
+        : output.jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toBuffer()
     })
+    const format = data[0] === 0x89 ? 'png' : 'jpeg'
     result.push({
       photoId: panel.photoId,
       width,
       height,
-      dataUrl: `data:image/jpeg;base64,${data.toString('base64')}`,
+      dataUrl: `data:image/${format};base64,${data.toString('base64')}`,
     })
   }
   return result

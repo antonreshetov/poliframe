@@ -5,6 +5,7 @@ import { stat } from 'node:fs/promises'
 import sharp from 'sharp'
 import { calculateLayout } from '../../shared/layout'
 import { createCaptionRenderer } from './captions'
+import { outputProfile } from './color'
 import { gesturePreview } from './composition'
 import { openImage } from './index'
 import { PreviewCache } from './preview-cache'
@@ -12,7 +13,7 @@ import { PreviewCache } from './preview-cache'
 const watermarkPreviewCache = new PreviewCache(16 * 1024 * 1024)
 const captionPreviewPixels = new WeakMap<
   Buffer,
-  { factor: number, dataUrl: string }
+  { factor: number, profile: string, dataUrl: string }
 >()
 
 /** Photo layers stay decoded in Chromium; only caption pixels cross the worker boundary. */
@@ -34,30 +35,61 @@ export async function annotationPreview(
     assets,
     async (id, width, scale) => (await captions(id, width, scale)).height,
   )
-  const factor = Math.min(1, maxSize / Math.max(layout.width, layout.height))
+  const renderedCaptions = await Promise.all(
+    layout.captions.map(async cap => ({
+      cap,
+      text: await captions(
+        cap.photoId,
+        Math.max(1, cap.width - cap.paddingX * 2),
+        cap.scale,
+      ),
+    })),
+  )
+  const annotationArea
+    = renderedCaptions.reduce(
+      (sum, { text }) =>
+        sum
+        + text.pieces.reduce(
+          (area, piece) => area + piece.width * piece.height,
+          0,
+        ),
+      0,
+    ) + (snapshot.watermark.photoId ? 2200 * 2200 : 0)
+  const annotationFactor = Math.min(
+    1,
+    Math.sqrt((16 * 1024 * 1024) / 24 / Math.max(1, annotationArea)),
+  )
+  const factor = Math.min(
+    annotationFactor,
+    maxSize / Math.max(layout.width, layout.height),
+  )
+  const profile = outputProfile(snapshot.output.profile, resources)
   const annotationLayers: NonNullable<PreviewResult['annotationLayers']> = []
-  for (const cap of layout.captions) {
-    const text = await captions(
-      cap.photoId,
-      Math.max(1, cap.width - cap.paddingX * 2),
-      cap.scale,
-    )
+  for (const { cap, text } of renderedCaptions) {
     for (const piece of text.pieces) {
-      const rasterFactor = Math.min(1, Math.ceil(factor * 16) / 16)
+      const rasterFactor = Math.min(
+        annotationFactor,
+        Math.ceil(factor * 16) / 16,
+      )
       let pixels = captionPreviewPixels.get(piece.input)
-      if (!pixels || pixels.factor !== rasterFactor) {
+      if (
+        !pixels
+        || pixels.factor !== rasterFactor
+        || pixels.profile !== profile
+      ) {
         const data = await sharp(piece.input)
           .resize(
             Math.max(1, Math.round(piece.width * rasterFactor)),
             Math.max(1, Math.round(piece.height * rasterFactor)),
             { fit: 'fill' },
           )
-          .withIccProfile('srgb')
+          .withIccProfile(profile)
           .toColourspace('srgb')
           .png()
           .toBuffer()
         pixels = {
           factor: rasterFactor,
+          profile,
           dataUrl: `data:image/png;base64,${data.toString('base64')}`,
         }
         captionPreviewPixels.set(piece.input, pixels)
@@ -97,6 +129,8 @@ export async function annotationPreview(
         : minY + (areaH - height) / 2
     const info = await stat(logo.path)
     const key = JSON.stringify([
+      profile,
+      annotationFactor,
       logo.path,
       info.size,
       info.mtimeMs,
@@ -105,12 +139,12 @@ export async function annotationPreview(
     const pixels = await watermarkPreviewCache.get(key, () =>
       openImage(logo.path)
         .resize({
-          width: 2200,
-          height: 2200,
+          width: Math.max(1, Math.floor(2200 * annotationFactor)),
+          height: Math.max(1, Math.floor(2200 * annotationFactor)),
           fit: 'inside',
           withoutEnlargement: true,
         })
-        .withIccProfile('srgb')
+        .withIccProfile(profile)
         .toColourspace('srgb')
         .png()
         .toBuffer())
@@ -131,6 +165,7 @@ export async function annotationPreview(
     ...(await gesturePreview(snapshot, assets, knownGestureImagesKey, {
       layout,
       maxSize,
+      resources,
     })),
   }
 }

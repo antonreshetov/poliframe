@@ -241,7 +241,7 @@ it('a restarted render worker honors published gesture keys and sends pixels to 
   assert.equal(region.gestureImages, undefined)
 })
 
-it('gesture JPEG matches the LZW pipeline across source buckets, transforms and profiles', async (t) => {
+it('gesture pixels match the LZW pipeline across source buckets, transforms and profiles', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'poliframe-gesture-pixels-'))
   t.onTestFinished(() => rm(directory, { recursive: true, force: true }))
   for (const profile of ['untagged', 'srgb', 'p3'] as const) {
@@ -309,11 +309,14 @@ it('gesture JPEG matches the LZW pipeline across source buckets, transforms and 
         { x: 0, y: 0, width: outputWidth, height: outputHeight },
         source,
       )
-      const expected = await openImage(tile)
+      const output = openImage(tile)
         .withIccProfile('srgb')
         .toColourspace('srgb')
-        .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
-        .toBuffer()
+      const expected = await (
+        channels === 4
+          ? output.png()
+          : output.jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
+      ).toBuffer()
       const [actual] = await gestureImages(snapshot, [asset])
       assert.equal(actual!.width, outputWidth)
       assert.equal(actual!.height, outputHeight)
@@ -402,7 +405,14 @@ it('gesture resolution follows the largest cover requirement and acknowledges on
     zoomed.gestureImagesKey,
     { layout, maxSize: 3200 },
   )
-  assert.equal(full.gestureImages![0]!.width, 2200)
+  assert.equal(full.gestureImages![0]!.width, 1982)
+  assert.ok(
+    full.gestureImages![0]!.width
+    * full.gestureImages![0]!.height
+    * 16
+    * layout.cells.length
+    <= 80 * 1024 * 1024,
+  )
   assert.notEqual(full.gestureImagesKey, zoomed.gestureImagesKey)
   snapshot.panels[0]!.transform.rotation = 90
   snapshot.panels[0]!.transform.crop = { x: 0, y: 0, width: 1, height: 0.25 }
@@ -424,4 +434,155 @@ it('gesture resolution follows the largest cover requirement and acknowledges on
     300,
     'never enlarge original crop pixels',
   )
+  const repeated = {
+    ...layout,
+    cells: Array.from({ length: 128 }, (_, index) => ({
+      ...layout.cells[1]!,
+      id: `copy-${index}`,
+    })),
+  }
+  snapshot.panels[0]!.transform = identityTransform()
+  const bounded = await gesturePreview(snapshot, [asset], undefined, {
+    layout: repeated,
+    maxSize: 3200,
+  })
+  const image = bounded.gestureImages![0]!
+  assert.ok(image.width < 512, '128 mounted copies use a smaller level')
+  assert.ok(
+    (image.width * image.height * 8 + image.dataUrl.length * 2) * 128
+    <= 80 * 1024 * 1024,
+  )
+})
+
+it('fast scene source preserves oriented dimensions, alpha and selected ICC after shrinking', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'poliframe-fast-source-'))
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }))
+  for (const profile of ['srgb', 'p3'] as const) {
+    const path = join(directory, `${profile}.png`)
+    await sharp({
+      create: {
+        width: 3001,
+        height: 1903,
+        channels: 4,
+        background: { r: 210, g: 70, b: 30, alpha: 0.6 },
+      },
+    })
+      .withMetadata({ orientation: 6 })
+      .withIccProfile(profile)
+      .png()
+      .toFile(path)
+    const asset = {
+      id: profile,
+      path,
+      name: profile,
+      ...(await sharp(path).metadata()).autoOrient,
+      exif: {},
+    }
+    const snapshot = defaults()
+    snapshot.output.profile = profile
+    const transform = {
+      ...identityTransform(),
+      rotation: 90,
+      flipX: true,
+      crop: { x: 0.1, y: 0.1, width: 0.7, height: 0.8 },
+    }
+    snapshot.panels = [{ photoId: profile, transform }]
+    const layout = {
+      width: 3000,
+      height: 3000,
+      nativeWidth: 3000,
+      nativeHeight: 3000,
+      dpi: 72,
+      captions: [],
+      warnings: [],
+      cells: [
+        { id: 'cell', photoId: profile, x: 0, y: 0, width: 500, height: 500 },
+      ],
+    }
+    const first = await gesturePreview(snapshot, [asset], undefined, {
+      layout,
+      maxSize: 800,
+    })
+    const actual = first.gestureImages![0]!
+    // Independently materialize the 8-bit source in its embedded profile, then
+    // use the exact transform oracle. Odd oriented dimensions guard NaN/rounding.
+    const resized = await sharp(path)
+      .autoOrient()
+      .keepIccProfile()
+      .resize(Math.round((asset.width * 1024) / 3001), 1024, {
+        fit: 'fill',
+        fastShrinkOnLoad: false,
+      })
+      .tiff({ compression: 'none' })
+      .toBuffer()
+    assert.equal((await sharp(resized).metadata()).hasAlpha, true)
+    const working = await (
+      await color.toWorkingPipeline(resized)
+    )
+      .tiff({ compression: 'none' })
+      .toBuffer()
+    const tile = await transformImage(
+      asset,
+      transform,
+      actual.width,
+      actual.height,
+      undefined,
+      working,
+    )
+    const matte = await color.toWorkingImage(
+      await sharp({
+        create: { width: 1, height: 1, channels: 3, background: snapshot.mat },
+      })
+        .png()
+        .toBuffer(),
+    )
+    const expected = await openImage(matte)
+      .resize(actual.width, actual.height, { fit: 'fill' })
+      .pipelineColourspace('rgb16')
+      .composite([{ input: tile, left: 0, top: 0 }])
+      .withIccProfile(profile)
+      .toColourspace('srgb')
+      .png()
+      .toBuffer()
+    const bytes = Buffer.from(actual.dataUrl.split(',')[1]!, 'base64')
+    assert.deepEqual(bytes, expected)
+    const metadata = await sharp(bytes).metadata()
+    assert.equal(metadata.width, actual.width)
+    assert.equal(metadata.height, actual.height)
+    assert.ok(metadata.icc)
+    assert.equal(metadata.hasAlpha, true)
+    assert.equal(metadata.format, 'png')
+    snapshot.output.profile = profile === 'srgb' ? 'p3' : 'srgb'
+    const changed = await gesturePreview(
+      snapshot,
+      [asset],
+      first.gestureImagesKey,
+      { layout, maxSize: 800 },
+    )
+    assert.notEqual(changed.gestureImagesKey, first.gestureImagesKey)
+    assert.ok(changed.gestureImages)
+    const changedIcc = (
+      await sharp(
+        Buffer.from(changed.gestureImages[0]!.dataUrl.split(',')[1]!, 'base64'),
+      ).metadata()
+    ).icc
+    assert.notDeepEqual(changedIcc, metadata.icc)
+    const repeated = {
+      ...layout,
+      cells: Array.from({ length: 128 }, (_, index) => ({
+        ...layout.cells[0]!,
+        id: `alpha-${index}`,
+      })),
+    }
+    const bounded = await gesturePreview(snapshot, [asset], undefined, {
+      layout: repeated,
+      maxSize: 3200,
+    })
+    const small = bounded.gestureImages![0]!
+    assert.ok(small.width < 512)
+    assert.ok(
+      (small.width * small.height * 8 + small.dataUrl.length * 2) * 128
+      <= 80 * 1024 * 1024,
+    )
+  }
 })

@@ -9,6 +9,23 @@ import { calculateLayout } from '../../../shared/layout'
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 
+function sceneFitsBudget(result: PreviewResult): boolean {
+  const photoBytes = (result.gestureImages ?? []).reduce((bytes, image) => {
+    const copies = result.layout.cells.filter(
+      cell => cell.photoId === image.photoId,
+    ).length
+    return (
+      bytes
+      + copies * (image.width * image.height * 8 + image.dataUrl.length * 2)
+    )
+  }, 0)
+  // Annotation rasters have their own 16 MiB worker-side allowance.
+  const annotationBytes = result.annotationLayers?.length
+    ? 16 * 1024 * 1024
+    : 0
+  return photoBytes + annotationBytes <= 96 * 1024 * 1024
+}
+
 interface RenderDependencies {
   state: Ref<Composition>
   photos: Record<string, Photo>
@@ -35,7 +52,6 @@ export function useEditorRendering({
   let importedPreviewPending = false
   let geometryFrame = 0
   let lastRenderStart = 0
-  let lastStartedRevision = 0
   const renderWake = ref(0)
   let decodedPreviewUrls = new Set<string>()
   let publishedTransforms = new Map<string, string>()
@@ -62,7 +78,7 @@ export function useEditorRendering({
       }
       const existing
         = publishedTransforms.get(panel.photoId)
-          === JSON.stringify(panel.transform)
+          === JSON.stringify([panel.transform, snapshot.output.profile])
           ? preview.value?.gestureImages?.find(
               image => image.photoId === panel.photoId,
             )
@@ -93,7 +109,8 @@ export function useEditorRendering({
         height: photo.height * ratio,
       })
     }
-    interactivePreview.value = { revision, layout, dataUrl: '', gestureImages }
+    const result = { revision, layout, dataUrl: '', gestureImages }
+    interactivePreview.value = sceneFitsBudget(result) ? result : null
   }
   const renderRevision = ref(0)
   let timer: ReturnType<typeof setTimeout>
@@ -141,7 +158,6 @@ export function useEditorRendering({
           nativeRendering = true
           renderAgain = false
           lastRenderStart = Date.now()
-          lastStartedRevision = revision
           const annotationMode
             = state.value.caption.enabled || !!state.value.watermark.photoId
           const photoSignature = () =>
@@ -149,6 +165,11 @@ export function useEditorRendering({
               state.value.panels,
               state.value.grid,
               state.value.layout,
+              state.value.gridAspect,
+              state.value.output.profile,
+              state.value.output.size,
+              state.value.units,
+              state.value.print,
               state.value.watermark.photoId,
             ])
           const startedPhotos = photoSignature()
@@ -158,9 +179,7 @@ export function useEditorRendering({
               && (state.value.caption.enabled
                 || !!state.value.watermark.photoId)
               && startedPhotos === photoSignature())
-            || (spacingEditing.value
-              && !canUseLocalGeometry()
-              && revision === lastStartedRevision)
+
           rendering.value = true
           try {
             const snapshot = clone(state.value)
@@ -170,7 +189,7 @@ export function useEditorRendering({
               snapshot,
               previewSize.value,
               undefined,
-              annotationMode,
+              true,
               publishedPreview?.gestureImagesKey,
             )
             if (!canPublish())
@@ -185,6 +204,8 @@ export function useEditorRendering({
               }
               result.gestureImages = publishedPreview.gestureImages
             }
+            if (!sceneFitsBudget(result))
+              throw new Error('Preview scene exceeds the memory budget')
             // Decode before publishing: replacing the live layers must not expose
             // an undecoded image or make the first drag pay for photo decoding.
             if (typeof window.Image === 'function') {
@@ -215,7 +236,7 @@ export function useEditorRendering({
               publishedTransforms = new Map(
                 snapshot.panels.map(panel => [
                   panel.photoId,
-                  JSON.stringify(panel.transform),
+                  JSON.stringify([panel.transform, snapshot.output.profile]),
                 ]),
               )
               preview.value = result
