@@ -210,7 +210,12 @@ export function usePreviewViewport({
       }
       const generation = regionGeneration
       clearTimeout(regionTimer)
-      regionPreview.value = null
+      regionPreview.value
+        = regionAllowed.value
+          && visibleRegion.value
+          && completed?.result.detailTiles
+          ? completed.result
+          : null
       regionRendering.value = false
       currentKey = ''
       const region = visibleRegion.value
@@ -256,82 +261,116 @@ export function usePreviewViewport({
       regionRendering.value = true
       if (pending?.key === key)
         return
-      regionTimer = setTimeout(() => {
-        const request = ++requestSequence
-        const promise = (async () => {
-          try {
-            const result = await window.poliframe.preview(
-              snapshot,
-              maxSize,
-              region,
-            )
-            if (
-              disposed
-              || generation !== regionGeneration
-              || request !== requestSequence
-              || result.revision !== revision
-            ) {
-              return
-            }
-            const factor = Math.min(
-              1,
-              maxSize / Math.max(region.width, region.height),
-            )
-            const expectedPixels
-              = Math.ceil(region.width * factor)
-                * Math.ceil(region.height * factor)
-            if (
-              result.dataUrl.length * 2 + expectedPixels * 8
-              > 64 * 1024 * 1024
-            ) {
-              throw new Error('Preview region exceeds the memory budget')
-            }
-            // The single ROI allowance covers both displayed and cached pixels.
-            completed = undefined
-            const image
-              = typeof window.Image === 'function'
-                ? new window.Image()
-                : undefined
-            if (image) {
-              image.src = result.dataUrl
-              await image.decode()
-            }
-            if (
-              disposed
-              || generation !== regionGeneration
-              || request !== requestSequence
-            ) {
-              return
-            }
-            const pixels
-              = image?.naturalWidth && image.naturalHeight
-                ? image.naturalWidth * image.naturalHeight
-                : Math.ceil(region.width * factor)
-                  * Math.ceil(region.height * factor)
-            const cost = result.dataUrl.length * 2 + pixels * 8
-            if (cost <= 64 * 1024 * 1024)
+      regionTimer = setTimeout(
+        () => {
+          const request = ++requestSequence
+          const promise = (async () => {
+            try {
+              const result = await window.poliframe.preview(
+                snapshot,
+                maxSize,
+                region,
+              )
+              if (
+                disposed
+                || generation !== regionGeneration
+                || request !== requestSequence
+                || result.revision !== revision
+              ) {
+                return
+              }
+              const factor = Math.min(
+                1,
+                maxSize / Math.max(region.width, region.height),
+              )
+              const images = result.detailTiles ?? [
+                {
+                  dataUrl: result.dataUrl,
+                  pixelWidth: Math.ceil(region.width * factor),
+                  pixelHeight: Math.ceil(region.height * factor),
+                },
+              ]
+              const expectedCost = images.reduce(
+                (sum, item) =>
+                  sum
+                  + item.dataUrl.length * 2
+                  + item.pixelWidth * item.pixelHeight * 8,
+                0,
+              )
+              if (expectedCost > 64 * 1024 * 1024)
+                throw new Error('Preview region exceeds the memory budget')
+              // Keep settled tiles visible while fetching. Release them before
+              // decoding a replacement if both sets would exceed the allowance.
+              const previousCost = (
+                regionPreview.value?.detailTiles ?? []
+              ).reduce(
+                (sum, item) =>
+                  sum
+                  + item.dataUrl.length * 2
+                  + item.pixelWidth * item.pixelHeight * 8,
+                0,
+              )
+              if (previousCost + expectedCost > 64 * 1024 * 1024)
+                regionPreview.value = null
+              completed = undefined
+              let cost = 0
+              for (const item of images) {
+                if (
+                  disposed
+                  || generation !== regionGeneration
+                  || request !== requestSequence
+                ) {
+                  return
+                }
+                const image
+                  = typeof window.Image === 'function'
+                    ? new window.Image()
+                    : undefined
+                if (image) {
+                  image.src = item.dataUrl
+                  await image.decode()
+                }
+                cost
+                  += item.dataUrl.length * 2
+                    + (image?.naturalWidth && image.naturalHeight
+                      ? image.naturalWidth * image.naturalHeight
+                      : item.pixelWidth * item.pixelHeight)
+                    * 8
+              }
+              if (
+                disposed
+                || generation !== regionGeneration
+                || request !== requestSequence
+              ) {
+                return
+              }
+              if (cost > 64 * 1024 * 1024)
+                throw new Error('Preview region exceeds the memory budget')
               completed = { key, result }
-            if (currentKey === key && regionAllowed.value)
-              regionPreview.value = result
-          }
-          catch (error) {
-            if (
-              !disposed
-              && generation === regionGeneration
-              && currentKey === key
-            ) {
-              e.fail(error)
+              if (currentKey === key && regionAllowed.value)
+                regionPreview.value = result
             }
-          }
-          finally {
-            if (pending?.request === request)
-              pending = undefined
-            if (currentKey === key && request === requestSequence)
-              regionRendering.value = false
-          }
-        })()
-        pending = { key, request, promise }
-      }, 180)
+            catch (error) {
+              if (
+                !disposed
+                && generation === regionGeneration
+                && currentKey === key
+                && request === requestSequence
+              ) {
+                e.fail(error)
+              }
+            }
+            finally {
+              if (pending?.request === request)
+                pending = undefined
+              if (currentKey === key && request === requestSequence)
+                regionRendering.value = false
+            }
+          })()
+          pending = { key, request, promise }
+        },
+        completed?.result.detailTiles ? 40 : 180,
+      )
     },
     { deep: true, flush: 'sync' },
   )

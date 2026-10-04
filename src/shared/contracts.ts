@@ -123,6 +123,12 @@ export interface LayoutResult {
   warnings: string[]
 }
 export interface PreviewResult {
+  detailTiles?: (Rect & {
+    key: string
+    pixelWidth: number
+    pixelHeight: number
+    dataUrl: string
+  })[]
   annotationLayers?: (Rect & { dataUrl: string, opacity?: number })[]
   gestureImagesKey?: string
   gestureImages?: {

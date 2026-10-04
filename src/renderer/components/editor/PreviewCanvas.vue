@@ -261,7 +261,7 @@ const { dividers, dividerFeedback, hoverDivider, leaveDivider, resize }
         </div>
       </div>
       <img
-        v-if="regionPreview?.region"
+        v-if="regionPreview?.region && regionPreview.dataUrl"
         v-show="regionAllowed && !dragging"
         :src="regionPreview.dataUrl"
         alt=""
@@ -272,6 +272,21 @@ const { dividers, dividerFeedback, hoverDivider, leaveDivider, resize }
           top: `${regionPreview.region.y * scale}px`,
           width: `${regionPreview.region.width * scale}px`,
           height: `${regionPreview.region.height * scale}px`,
+        }"
+      >
+      <img
+        v-for="tile in regionPreview?.detailTiles ?? []"
+        v-show="regionAllowed && !dragging"
+        :key="tile.key"
+        :src="tile.dataUrl"
+        alt=""
+        draggable="false"
+        class="pointer-events-none absolute"
+        :style="{
+          left: `${tile.x * scale}px`,
+          top: `${tile.y * scale}px`,
+          width: `${tile.width * scale}px`,
+          height: `${tile.height * scale}px`,
         }"
       >
       <div

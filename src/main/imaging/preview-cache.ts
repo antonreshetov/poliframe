@@ -7,6 +7,10 @@ export class PreviewCache {
 
   constructor(private readonly budget: number) {}
 
+  peek(key: string): Buffer | undefined {
+    return this.entries.get(key)
+  }
+
   async get(key: string, create: () => Promise<Buffer>): Promise<Buffer> {
     const existing = this.entries.get(key)
     if (existing) {

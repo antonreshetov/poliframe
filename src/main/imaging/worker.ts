@@ -4,6 +4,7 @@ import { parentPort } from 'node:worker_threads'
 import { annotationPreview } from './annotations'
 import { outputProfile } from './color'
 import { compose, gesturePreview } from './composition'
+import { detailPreview } from './detail-preview'
 import { exportImage } from './index'
 
 parentPort!.on(
@@ -31,6 +32,19 @@ parentPort!.on(
         )
         parentPort!.postMessage({ id: job.id, result })
         return
+      }
+      if (job.type === 'preview' && job.region) {
+        const result = await detailPreview(
+          job.snapshot,
+          job.assets,
+          job.resources,
+          job.region,
+          job.maxSize ?? 2200,
+        )
+        if (result) {
+          parentPort!.postMessage({ id: job.id, result })
+          return
+        }
       }
       const { pipeline, layout } = await compose(
         job.snapshot,

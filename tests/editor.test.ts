@@ -1284,3 +1284,128 @@ it('local geometry refuses oversized mounted thumbnail copies until the bounded 
   await new Promise(resolve => setTimeout(resolve, 30))
   assert.equal(editor.interactivePreview, null)
 })
+
+it('detail tiles stay visible during pan, decode as a bounded set, and disappear on edits', async () => {
+  const output = {
+    width: 2000,
+    height: 1000,
+    cells: [],
+    captions: [],
+    warnings: [],
+    nativeWidth: 2000,
+    nativeHeight: 1000,
+    dpi: 72,
+  }
+  const failures = []
+  const editor = vue.reactive({
+    state: defaultsModule.defaults(),
+    preview: { revision: 1, layout: output, dataUrl: 'base' },
+    renderRevision: 1,
+    rendering: false,
+    spacingEditing: false,
+    interactivePreview: null,
+    selected: [],
+    fail: error => failures.push(error),
+  })
+  context.editor = editor
+  const pending = []
+  const decoded = []
+  vi.stubGlobal('window', {
+    devicePixelRatio: 1,
+    Image: class {
+      decode() {
+        decoded.push(this.src)
+        return Promise.resolve()
+      }
+    },
+    poliframe: {
+      preview: (snapshot, maxSize, region) =>
+        new Promise(complete =>
+          pending.push({ snapshot, maxSize, region, complete }),
+        ),
+    },
+  })
+  const zoom = vue.ref(null)
+  const scope = vue.effectScope()
+  cleanups.push(() => scope.stop())
+  const warning = console.warn
+  console.warn = () => {}
+  let controls
+  try {
+    controls = scope.run(() =>
+      usePreviewViewport({
+        layout: vue.computed(() => output),
+        resizing: vue.ref(false),
+        zoom: () => zoom.value,
+        emit() {},
+      }),
+    )
+  }
+  finally {
+    console.warn = warning
+  }
+  const tile = {
+    key: 'tile',
+    dataUrl: 'tile-pixels',
+    x: 0,
+    y: 0,
+    width: 512,
+    height: 512,
+    pixelWidth: 512,
+    pixelHeight: 512,
+  }
+  zoom.value = 100
+  await new Promise(resolve => setTimeout(resolve, 200))
+  pending[0].complete({
+    revision: 1,
+    region: pending[0].region,
+    layout: output,
+    dataUrl: '',
+    detailTiles: [tile],
+  })
+  await flush()
+  assert.deepEqual(decoded, ['tile-pixels'])
+  controls.pan.value = { x: 60, y: 0 }
+  assert.equal(
+    controls.regionPreview.value.detailTiles[0].key,
+    'tile',
+    'loaded detail remains during pan',
+  )
+  await new Promise(resolve => setTimeout(resolve, 60))
+  assert.equal(pending.length, 2, 'tiled pan uses a shorter debounce')
+  pending[1].complete({
+    revision: 1,
+    region: pending[1].region,
+    layout: output,
+    dataUrl: '',
+    detailTiles: [
+      { ...tile, key: 'too-big', pixelWidth: 4096, pixelHeight: 4096 },
+    ],
+  })
+  await flush()
+  assert.equal(
+    decoded.length,
+    1,
+    'combined tile cost is checked before decode',
+  )
+  assert.equal(failures.length, 1)
+  zoom.value = null
+  assert.equal(controls.regionPreview.value, null)
+  zoom.value = 100
+  await new Promise(resolve => setTimeout(resolve, 200))
+  pending[2].complete({
+    revision: 1,
+    region: pending[2].region,
+    layout: output,
+    dataUrl: '',
+    detailTiles: [{ ...tile, key: 'retry' }],
+  })
+  await flush()
+  assert.equal(controls.regionPreview.value.detailTiles[0].key, 'retry')
+  editor.renderRevision++
+  assert.equal(
+    controls.regionPreview.value,
+    null,
+    'old tiles must never survive a composition edit',
+  )
+})
