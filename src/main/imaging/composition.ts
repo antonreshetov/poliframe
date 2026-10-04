@@ -108,8 +108,7 @@ async function previewSource(asset: ImageAsset, sourceSize: number) {
     info.mtimeMs,
     info.ctimeMs,
   ])
-  const bucket
-    = [512, 1024, 2200, 4096].find(size => size >= sourceSize) ?? 0
+  const bucket = [1024, 2200, 4096].find(size => size >= sourceSize) ?? 0
   return {
     identity,
     bucket,
@@ -167,11 +166,53 @@ function visiblePanels(snapshot: Composition) {
   return snapshot.panels.filter(panel => visible.has(panel.photoId))
 }
 
+interface GesturePreviewContext {
+  layout: LayoutResult
+  maxSize: number
+}
+
+function gestureSize(
+  asset: ImageAsset,
+  transform: Transform,
+  context?: GesturePreviewContext,
+) {
+  const effective = effectiveSize(asset, transform)
+  const longest = Math.max(effective.width, effective.height)
+  let edge = 2200
+  if (context) {
+    const { layout, maxSize } = context
+    const factor = Math.min(1, maxSize / Math.max(layout.width, layout.height))
+    const required = layout.cells.reduce(
+      (largest, cell) =>
+        cell.photoId === asset.id
+          ? Math.max(
+              largest,
+              longest
+              * factor
+              * Math.max(
+                cell.width / effective.width,
+                cell.height / effective.height,
+              ),
+            )
+          : largest,
+      0,
+    )
+    edge = [512, 1024, 2200].find(size => size >= required) ?? 2200
+  }
+  const factor = Math.min(1, edge / longest)
+  return {
+    width: Math.max(1, Math.round(effective.width * factor)),
+    height: Math.max(1, Math.round(effective.height * factor)),
+    edge,
+  }
+}
+
 /** Stateless content identity: a worker restart never invalidates an acknowledged payload. */
 export async function gesturePreview(
   snapshot: Composition,
   assets: ImageAsset[],
   knownGestureImagesKey?: string,
+  context?: GesturePreviewContext,
 ): Promise<Pick<PreviewResult, 'gestureImages' | 'gestureImagesKey'>> {
   const identities = await Promise.all(
     visiblePanels(snapshot).map(async (panel) => {
@@ -179,6 +220,7 @@ export async function gesturePreview(
       if (!asset)
         throw new Error(`Grid image is unavailable: ${panel.photoId}`)
       const info = await stat(asset.path)
+      const { width, height } = gestureSize(asset, panel.transform, context)
       const { rotation, flipX, flipY, crop } = panel.transform
       return [
         panel.photoId,
@@ -195,6 +237,8 @@ export async function gesturePreview(
         crop.y,
         crop.width,
         crop.height,
+        width,
+        height,
       ]
     }),
   )
@@ -206,7 +250,7 @@ export async function gesturePreview(
     gestureImages:
       gestureImagesKey === knownGestureImagesKey
         ? undefined
-        : await gestureImages(snapshot, assets),
+        : await gestureImages(snapshot, assets, context),
   }
 }
 
@@ -215,19 +259,18 @@ const gestureCache = new PreviewCache(24 * 1024 * 1024)
 export async function gestureImages(
   snapshot: Composition,
   assets: ImageAsset[],
+  context?: GesturePreviewContext,
 ): Promise<NonNullable<PreviewResult['gestureImages']>> {
   const result: NonNullable<PreviewResult['gestureImages']> = []
   for (const panel of visiblePanels(snapshot)) {
     const asset = assets.find(item => item.id === panel.photoId)
     if (!asset)
       continue
-    const effective = effectiveSize(asset, panel.transform)
-    const factor = Math.min(
-      1,
-      2200 / Math.max(effective.width, effective.height),
+    const { width, height, edge } = gestureSize(
+      asset,
+      panel.transform,
+      context,
     )
-    const width = Math.max(1, Math.round(effective.width * factor))
-    const height = Math.max(1, Math.round(effective.height * factor))
     const info = await stat(asset.path)
     const key = JSON.stringify([
       asset.path,
@@ -235,11 +278,13 @@ export async function gestureImages(
       info.mtimeMs,
       info.ctimeMs,
       panel.transform,
+      width,
+      height,
     ])
     const data = await gestureCache.get(key, async () => {
       const source = await previewSource(
         asset,
-        2200
+        edge
         / Math.min(panel.transform.crop.width, panel.transform.crop.height),
       )
       // This intermediate is consumed immediately; keep compressed tiles out of
@@ -510,10 +555,15 @@ export async function compose(
     const logoHeight = Math.max(1, Math.round(logoH * factor))
     validateDimensions(logoWidth, logoHeight)
     const opacity = Math.max(0, Math.min(1, wm.opacity / 100))
-    const input = await openImage(await toWorkingImage(logo.path))
-      .resize(logoWidth, logoHeight, { fit: 'fill' })
-      .ensureAlpha()
-      .linear([1, 1, 1, opacity], [0, 0, 0, 0])
+    const working = await toWorkingImage(logo.path)
+    const logoPipeline = openImage(working).resize(logoWidth, logoHeight, {
+      fit: 'fill',
+    })
+    // Sharp runs linear before ensureAlpha, regardless of the chain order.
+    if ((await sharp(working).metadata()).hasAlpha)
+      logoPipeline.linear([1, 1, 1, opacity], [0, 0, 0, 0])
+    else logoPipeline.ensureAlpha(opacity)
+    const input = await logoPipeline
       .toColourspace('rgb16')
       .withIccProfile('p3')
       .tiff({ compression: 'lzw' })

@@ -16,23 +16,6 @@ const emit = defineEmits<{
   fit: [number]
 }>()
 const e = useEditorContext()
-const showRendering = ref(false)
-let renderingTimer: ReturnType<typeof setTimeout> | undefined
-watch(
-  () => e.rendering,
-  (active) => {
-    clearTimeout(renderingTimer)
-    if (!active) {
-      showRendering.value = false
-      return
-    }
-    renderingTimer = setTimeout(() => {
-      showRendering.value = true
-    }, 300)
-  },
-  { immediate: true },
-)
-onUnmounted(() => clearTimeout(renderingTimer))
 const draftGrid = ref<GridNode | null>(null)
 const dragBacking = ref<PreviewResult | null>(null)
 const resizing = ref(false)
@@ -89,6 +72,8 @@ const {
   pan,
   scale,
   regionPreview,
+  regionAllowed,
+  regionRendering,
   wheel,
   panStart,
   clearSelection,
@@ -98,6 +83,24 @@ const {
   zoom: () => zoom,
   emit,
 })
+const showRendering = ref(false)
+let renderingTimer: ReturnType<typeof setTimeout> | undefined
+watch(
+  () => e.rendering || regionRendering.value,
+  (active) => {
+    clearTimeout(renderingTimer)
+    if (!active) {
+      showRendering.value = false
+      return
+    }
+    renderingTimer = setTimeout(() => {
+      showRendering.value = true
+    }, 300)
+  },
+  { immediate: true },
+)
+onUnmounted(() => clearTimeout(renderingTimer))
+
 const compositionImageStyle = computed(() => {
   const output = e.preview?.layout
   if (!output)
@@ -186,20 +189,6 @@ const { dividers, dividerFeedback, hoverDivider, leaveDivider, resize }
         class="composition-image pointer-events-none"
         :style="compositionImageStyle"
       >
-      <img
-        v-if="regionPreview?.region"
-        v-show="!e.interactivePreview"
-        :src="regionPreview.dataUrl"
-        alt=""
-        draggable="false"
-        class="pointer-events-none absolute"
-        :style="{
-          left: `${regionPreview.region.x * scale}px`,
-          top: `${regionPreview.region.y * scale}px`,
-          width: `${regionPreview.region.width * scale}px`,
-          height: `${regionPreview.region.height * scale}px`,
-        }"
-      >
       <div
         v-if="(draftGrid || e.interactivePreview) && layout"
         :style="e.interactivePreview ? { background: e.state.mat } : {}"
@@ -269,6 +258,20 @@ const { dividers, dividerFeedback, hoverDivider, leaveDivider, resize }
           >
         </div>
       </div>
+      <img
+        v-if="regionPreview?.region"
+        v-show="regionAllowed && !dragging"
+        :src="regionPreview.dataUrl"
+        alt=""
+        draggable="false"
+        class="pointer-events-none absolute"
+        :style="{
+          left: `${regionPreview.region.x * scale}px`,
+          top: `${regionPreview.region.y * scale}px`,
+          width: `${regionPreview.region.width * scale}px`,
+          height: `${regionPreview.region.height * scale}px`,
+        }"
+      >
       <div
         v-if="e.state.layout === 'grid'"
         class="outer-tracks"

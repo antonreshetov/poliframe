@@ -236,6 +236,74 @@ it('watermark preserves source alpha and multiplies opacity', async () => {
   assert.ok(raw[offset + 2] < 20)
 })
 
+it('opaque RGB watermarks blend at half opacity in full, preview and ROI output', async () => {
+  const path = join(dir, 'opaque-logo.jpg')
+  await sharp({
+    create: { width: 10, height: 10, channels: 3, background: '#000000' },
+  })
+    .jpeg()
+    .toFile(path)
+  assert.equal((await sharp(path).metadata()).hasAlpha, false)
+  const alphaPath = join(dir, 'opaque-logo-alpha.png')
+  await sharp(path).ensureAlpha().png().toFile(alphaPath)
+  const logo = { ...assets[0], id: 'opaque-logo', path, width: 10, height: 10 }
+  const s = state([assets[0]])
+  s.watermark = { photoId: logo.id, size: 20, opacity: 50, position: 'center' }
+  for (const [maxSize, region] of [
+    [undefined, undefined],
+    [300, undefined],
+    [100, { x: 280, y: 180, width: 40, height: 40 }],
+  ]) {
+    const { pipeline } = await compose(
+      s,
+      [...assets, logo],
+      resources,
+      maxSize,
+      region,
+    )
+    const output = await pipeline.tiff({ compression: 'lzw' }).toBuffer()
+    const metadata = await sharp(output).metadata()
+    assert.equal(metadata.depth, 'ushort')
+    assert.equal(metadata.hasProfile, true)
+    const expected = await compose(
+      s,
+      [...assets, { ...logo, path: alphaPath }],
+      resources,
+      maxSize,
+      region,
+    )
+    const raw = input =>
+      sharp(input)
+        .pipelineColourspace('rgb16')
+        .toColourspace('rgb16')
+        .raw({ depth: 'ushort' })
+        .toBuffer()
+    const reference = await expected.pipeline
+      .tiff({ compression: 'lzw' })
+      .toBuffer()
+    assert.deepEqual(metadata.icc, (await sharp(reference).metadata()).icc)
+    assert.deepEqual(
+      await raw(output),
+      await raw(reference),
+      'adding opaque alpha must not alter color or precision',
+    )
+    const { data, info } = await sharp(output)
+      .withIccProfile('srgb')
+      .toColourspace('srgb')
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true })
+    const center
+      = (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2))
+        * 3
+    assert.ok(
+      data[center] > 90 && data[center] < 170,
+      `half-opacity red ${data[center]}`,
+    )
+    assert.ok(data[center + 1] < 10 && data[center + 2] < 10)
+  }
+})
+
 it('watermark beyond the canvas clips without stretching or encoder errors', async () => {
   const path = join(dir, 'tall-logo.png')
   await sharp({

@@ -66,6 +66,7 @@ parentPort!.on(
                   job.snapshot,
                   job.assets,
                   job.knownGestureImagesKey,
+                  { layout, maxSize: job.maxSize ?? 2200 },
                 )),
             dataUrl: `data:image/jpeg;base64,${data.toString('base64')}`,
             layout,

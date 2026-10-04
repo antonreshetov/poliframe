@@ -38,6 +38,8 @@ export function useEditorRendering({
   let lastStartedRevision = 0
   const renderWake = ref(0)
   let decodedPreviewUrls = new Set<string>()
+  let publishedTransforms = new Map<string, string>()
+  let previousGeometry = ''
   let nativeRendering = false
   let renderAgain = false
   const canUseLocalGeometry = () =>
@@ -45,23 +47,52 @@ export function useEditorRendering({
   async function updateInteractive(revision: number) {
     const snapshot = clone(state.value)
     const layout = await calculateLayout(snapshot, Object.values(photos))
-    if (revision !== generation)
+    if (revision !== generation || preview.value?.revision === revision)
       return
-    const gestureImages = snapshot.panels.map((panel) => {
-      const existing = preview.value?.gestureImages?.find(
-        image => image.photoId === panel.photoId,
-      )
-      if (existing)
-        return existing
-      const photo = photos[panel.photoId]!
+    const gestureImages: NonNullable<PreviewResult['gestureImages']> = []
+    const visible = new Set(
+      layout.cells.map(cell => cell.photoId).filter(Boolean),
+    )
+    for (const photoId of visible) {
+      const panel = snapshot.panels.find(panel => panel.photoId === photoId)
+      const photo = photos[photoId!]
+      if (!panel || !photo) {
+        interactivePreview.value = null
+        return
+      }
+      const existing
+        = publishedTransforms.get(panel.photoId)
+          === JSON.stringify(panel.transform)
+          ? preview.value?.gestureImages?.find(
+              image => image.photoId === panel.photoId,
+            )
+          : undefined
+      if (existing) {
+        gestureImages.push(existing)
+        continue
+      }
+      const { rotation, flipX, flipY, crop } = panel.transform
+      if (
+        rotation !== 0
+        || flipX
+        || flipY
+        || crop.x !== 0
+        || crop.y !== 0
+        || crop.width !== 1
+        || crop.height !== 1
+        || !photo.thumbnail
+      ) {
+        interactivePreview.value = null
+        return
+      }
       const ratio = Math.min(1, 800 / Math.max(photo.width, photo.height))
-      return {
+      gestureImages.push({
         photoId: photo.id,
         dataUrl: photo.thumbnail,
         width: photo.width * ratio,
         height: photo.height * ratio,
-      }
-    })
+      })
+    }
     interactivePreview.value = { revision, layout, dataUrl: '', gestureImages }
   }
   const renderRevision = ref(0)
@@ -69,11 +100,19 @@ export function useEditorRendering({
   watch(
     [state, previewSize, spacingEditing, renderWake],
     () => {
+      const geometry = JSON.stringify([
+        state.value.layout,
+        state.value.grid,
+        state.value.gridAspect,
+      ])
+      const geometryChanged = geometry !== previousGeometry
+      previousGeometry = geometry
       const revision = ++generation
       renderRevision.value = revision
       clearTimeout(timer)
       cancelAnimationFrame(geometryFrame)
       if (!state.value.panels.length && state.value.layout !== 'grid') {
+        publishedTransforms.clear()
         preview.value = null
         interactivePreview.value = null
         rendering.value = false
@@ -81,7 +120,10 @@ export function useEditorRendering({
       }
       const importingPreview = importedPreviewPending
       importedPreviewPending = false
-      if (canUseLocalGeometry() && (spacingEditing.value || importingPreview)) {
+      if (
+        canUseLocalGeometry()
+        && (spacingEditing.value || importingPreview || geometryChanged)
+      ) {
         geometryFrame = requestAnimationFrame(() => {
           void updateInteractive(revision).catch(fail)
         })
@@ -170,6 +212,12 @@ export function useEditorRendering({
                 ),
                 ...(result.gestureImages ?? []).map(image => image.dataUrl),
               ])
+              publishedTransforms = new Map(
+                snapshot.panels.map(panel => [
+                  panel.photoId,
+                  JSON.stringify(panel.transform),
+                ]),
+              )
               preview.value = result
               interactivePreview.value = result.annotationLayers
                 ? result

@@ -660,6 +660,22 @@ it('render indicator ignores short work and appears only after the delay', async
   await new Promise(resolve => setTimeout(resolve, 330))
   assert.equal(controls.showRendering.value, true)
   editor.rendering = false
+  controls.regionRendering.value = true
+  await flush()
+  assert.equal(
+    controls.showRendering.value,
+    true,
+    'quality refinement keeps the indicator visible',
+  )
+  controls.regionRendering.value = false
+  await flush()
+  assert.equal(controls.showRendering.value, false)
+  controls.regionRendering.value = true
+  await flush()
+  assert.equal(controls.showRendering.value, false)
+  await new Promise(resolve => setTimeout(resolve, 330))
+  assert.equal(controls.showRendering.value, true)
+  controls.regionRendering.value = false
   await flush()
   assert.equal(controls.showRendering.value, false)
 })
@@ -720,99 +736,284 @@ it('preview completed before decode cannot replace newer geometry after decode',
   assert.equal(JSON.stringify(editor.interactivePreview.layout), geometry)
 })
 
-it('viewport reacts to zoom and rejects regions superseded by pan or revision', async () => {
-  const output = {
-    width: 2000,
-    height: 1000,
-    cells: [],
-    captions: [],
-    warnings: [],
-    nativeWidth: 2000,
-    nativeHeight: 1000,
-    dpi: 72,
-  }
-  const editor = vue.reactive({
-    state: defaultsModule.defaults(),
-    preview: { revision: 1, layout: output, dataUrl: 'data:,base' },
-    renderRevision: 1,
-    rendering: false,
-    spacingEditing: false,
-    interactivePreview: null,
-    selected: [],
-    fail: (error) => {
-      throw error
-    },
+it('layout and template changes publish local geometry before a delayed native preview', async (t) => {
+  const { editor, api } = setup(t)
+  const render = async snapshot => ({
+    revision: snapshot.revision,
+    layout: await geometry.calculateLayout(
+      snapshot,
+      Object.values(editor.photos),
+    ),
+    dataUrl: 'data:,native',
+    gestureImages: snapshot.panels.map(panel => ({
+      photoId: panel.photoId,
+      width: 100,
+      height: 100,
+      dataUrl: 'data:,published-photo',
+    })),
   })
+  api.preview = render
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  const published = editor.preview
   const pending = []
-  context.editor = editor
-  vi.stubGlobal('window', {
-    devicePixelRatio: 1,
-    poliframe: {
-      preview: (snapshot, maxSize, region) =>
-        new Promise((complete) => {
-          pending.push({ snapshot, region, complete })
-        }),
-    },
-  })
-  const zoom = vue.ref(null)
-  const scope = vue.effectScope()
-  cleanups.push(() => scope.stop())
-  const originalWarn = console.warn
-  console.warn = () => {}
-  let controls
-  try {
-    controls = scope.run(() =>
-      usePreviewViewport({
-        layout: vue.computed(() => editor.preview.layout),
-        resizing: vue.ref(false),
-        zoom: () => zoom.value,
-        emit() {},
-      }),
-    )
-  }
-  finally {
-    console.warn = originalWarn
-  }
-  const fitScale = controls.scale.value
-  zoom.value = 100
-  await new Promise(resolve => setTimeout(resolve, 200))
-  assert.ok(controls.scale.value > fitScale)
-  assert.equal(pending.length, 1)
-  controls.pan.value = { x: 100, y: 0 }
-  pending[0].complete({
-    revision: 1,
-    region: pending[0].region,
-    dataUrl: 'stale-pan',
-    layout: output,
-  })
+  api.preview = snapshot =>
+    new Promise(resolve => pending.push({ snapshot, resolve }))
+  editor.state.layout = 'grid'
+  editor.template('1x2')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(editor.preview, published)
+  assert.equal(editor.interactivePreview.layout.cells.length, 2)
+  assert.equal(
+    editor.interactivePreview.gestureImages[0].dataUrl,
+    'data:,published-photo',
+  )
+  editor.template('1over2')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(editor.interactivePreview.layout.cells.length, 3)
+  assert.equal(editor.preview, published)
+  pending[0].resolve(await render(pending[0].snapshot))
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(
+    editor.preview,
+    published,
+    'the obsolete native grid cannot replace newer local geometry',
+  )
+  pending[1].resolve(await render(pending[1].snapshot))
   await flush()
-  assert.equal(controls.regionPreview.value, null)
-  await new Promise(resolve => setTimeout(resolve, 200))
-  assert.equal(pending.length, 2)
-  editor.renderRevision = 2
-  pending[1].complete({
-    revision: 1,
-    region: pending[1].region,
-    dataUrl: 'stale-revision',
-    layout: output,
-  })
-  await flush()
-  assert.equal(controls.regionPreview.value, null)
-  editor.preview = { revision: 2, layout: output, dataUrl: 'data:,latest' }
-  await new Promise(resolve => setTimeout(resolve, 200))
-  pending[2].complete({
-    revision: 2,
-    region: pending[2].region,
-    dataUrl: 'current',
-    layout: output,
-  })
-  await flush()
-  assert.equal(controls.regionPreview.value.dataUrl, 'current')
-  zoom.value = null
-  await flush()
-  assert.equal(controls.scale.value, fitScale)
-  assert.equal(controls.regionPreview.value, null)
+  assert.equal(editor.interactivePreview, null)
+  assert.equal(editor.preview.layout.cells.length, 3)
 })
+
+it('local geometry reuses only published transforms and never uses thumbnails for a pending crop', async (t) => {
+  const { editor, api } = setup(t)
+  api.preview = async snapshot => ({
+    revision: snapshot.revision,
+    layout: await geometry.calculateLayout(
+      snapshot,
+      Object.values(editor.photos),
+    ),
+    dataUrl: 'data:,native',
+    gestureImages: snapshot.panels.map(panel => ({
+      photoId: panel.photoId,
+      width: 100,
+      height: 100,
+      dataUrl: `data:,rotation-${panel.transform.rotation}`,
+    })),
+  })
+  await editor.add()
+  editor.state.panels[0].transform.rotation = 90
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal(editor.preview.gestureImages[0].dataUrl, 'data:,rotation-90')
+  api.preview = () => new Promise(() => {})
+  editor.state.layout = 'grid'
+  editor.template('1x2')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(
+    editor.interactivePreview.gestureImages[0].dataUrl,
+    'data:,rotation-90',
+  )
+  editor.state.panels[0].transform.crop = {
+    x: 0.1,
+    y: 0,
+    width: 0.8,
+    height: 1,
+  }
+  editor.template('1over2')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(
+    editor.interactivePreview,
+    null,
+    'neither old transform pixels nor an untransformed thumbnail are compatible',
+  )
+  editor.state.panels[0].transform = defaultsModule.identityTransform()
+  editor.template('1x2')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(
+    editor.interactivePreview.gestureImages[0].dataUrl,
+    'data:,',
+    'identity transforms can fall back to the imported thumbnail',
+  )
+})
+
+it('local geometry queued before native completion cannot replace the published preview afterward', async (t) => {
+  const { editor } = setup(t)
+  await editor.add()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  const frames = []
+  vi.stubGlobal('requestAnimationFrame', callback => frames.push(callback))
+  vi.stubGlobal('cancelAnimationFrame', () => {})
+  editor.state.layout = 'grid'
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(editor.preview.revision, editor.renderRevision)
+  assert.equal(editor.interactivePreview, null)
+  for (const frame of frames) frame()
+  await flush()
+  assert.equal(editor.interactivePreview, null)
+})
+
+it.each([false, true])(
+  'viewport reacts to zoom and rejects stale or interacting regions (annotations: %s)',
+  async (annotations) => {
+    const output = {
+      width: 2000,
+      height: 1000,
+      cells: [],
+      captions: [],
+      warnings: [],
+      nativeWidth: 2000,
+      nativeHeight: 1000,
+      dpi: 72,
+    }
+    const editor = vue.reactive({
+      state: defaultsModule.defaults(),
+      preview: { revision: 1, layout: output, dataUrl: 'data:,base' },
+      renderRevision: 1,
+      rendering: false,
+      spacingEditing: false,
+      interactivePreview: null,
+      selected: [],
+      fail: (error) => {
+        throw error
+      },
+    })
+    if (annotations) {
+      editor.preview.annotationLayers = []
+      editor.interactivePreview = editor.preview
+    }
+    const pending = []
+    context.editor = editor
+    vi.stubGlobal('window', {
+      devicePixelRatio: 1,
+      poliframe: {
+        preview: (snapshot, maxSize, region) =>
+          new Promise((complete) => {
+            pending.push({ snapshot, region, complete })
+          }),
+      },
+    })
+    const zoom = vue.ref(null)
+    const resizing = vue.ref(false)
+    const scope = vue.effectScope()
+    cleanups.push(() => scope.stop())
+    const originalWarn = console.warn
+    console.warn = () => {}
+    let controls
+    try {
+      controls = scope.run(() =>
+        usePreviewViewport({
+          layout: vue.computed(() => editor.preview.layout),
+          resizing,
+          zoom: () => zoom.value,
+          emit() {},
+        }),
+      )
+    }
+    finally {
+      console.warn = originalWarn
+    }
+    const fitScale = controls.scale.value
+    const overviewSize = editor.previewSize
+    const overviewRevision = editor.renderRevision
+    zoom.value = 100
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.ok(controls.scale.value > fitScale)
+    assert.equal(
+      editor.previewSize,
+      overviewSize,
+      'zoom keeps the overview at Fit resolution',
+    )
+    assert.equal(editor.renderRevision, overviewRevision)
+    assert.equal(pending.length, 1)
+    assert.equal(controls.regionRendering.value, true)
+    controls.pan.value = { x: 100, y: 0 }
+    pending[0].complete({
+      revision: 1,
+      region: pending[0].region,
+      dataUrl: 'stale-pan',
+      layout: output,
+    })
+    await flush()
+    assert.equal(controls.regionPreview.value, null)
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.equal(pending.length, 2)
+    assert.equal(
+      controls.regionRendering.value,
+      true,
+      'stale completion keeps current rendering active',
+    )
+    editor.renderRevision = 2
+    pending[1].complete({
+      revision: 1,
+      region: pending[1].region,
+      dataUrl: 'stale-revision',
+      layout: output,
+    })
+    await flush()
+    assert.equal(controls.regionPreview.value, null)
+    editor.preview = { revision: 2, layout: output, dataUrl: 'data:,latest' }
+    if (annotations) {
+      editor.preview.annotationLayers = []
+      editor.interactivePreview = editor.preview
+    }
+    await new Promise(resolve => setTimeout(resolve, 200))
+    pending[2].complete({
+      revision: 2,
+      region: pending[2].region,
+      dataUrl: 'current',
+      layout: output,
+    })
+    await flush()
+    assert.equal(controls.regionPreview.value.dataUrl, 'current')
+    assert.equal(controls.regionRendering.value, false)
+    editor.spacingEditing = true
+    assert.equal(
+      controls.regionPreview.value,
+      null,
+      'spacing immediately hides the settled ROI',
+    )
+    assert.equal(controls.regionAllowed.value, false)
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.equal(pending.length, 3, 'spacing must not schedule a new region')
+    editor.spacingEditing = false
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.equal(pending.length, 4)
+    editor.interactivePreview = { ...editor.preview }
+    pending[3].complete({
+      revision: 2,
+      region: pending[3].region,
+      dataUrl: 'stale-interaction',
+      layout: output,
+    })
+    await flush()
+    assert.equal(controls.regionPreview.value, null)
+    assert.equal(
+      controls.regionAllowed.value,
+      false,
+      'a temporary interactive preview blocks ROI',
+    )
+    editor.interactivePreview = annotations ? editor.preview : null
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.equal(pending.length, 5)
+    assert.equal(controls.regionRendering.value, true)
+    resizing.value = true
+    assert.equal(controls.regionRendering.value, false)
+    pending[4].complete({
+      revision: 2,
+      region: pending[4].region,
+      dataUrl: 'stale-resize',
+      layout: output,
+    })
+    await flush()
+    assert.equal(controls.regionPreview.value, null)
+    assert.equal(controls.regionAllowed.value, false)
+    zoom.value = null
+    await flush()
+    assert.equal(controls.scale.value, fitScale)
+    assert.equal(editor.previewSize, overviewSize)
+    assert.equal(controls.regionPreview.value, null)
+  },
+)
 
 it('export cancellation is silent and successful exports use Sonner', async (t) => {
   const { editor, api, notifications } = setup(t)

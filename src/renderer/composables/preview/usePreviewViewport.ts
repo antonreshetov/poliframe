@@ -126,13 +126,14 @@ export function usePreviewViewport({
   watchEffect(() => {
     const ratio = dpr.value
     const rendered = layout.value
-      ? Math.max(layout.value.width, layout.value.height) * scale.value
+      ? Math.max(layout.value.width, layout.value.height) * fitScale.value
       : Math.max(size.value.width, size.value.height)
     e.previewSize = Math.max(
       800,
       Math.min(3200, Math.ceil((rendered * ratio) / 256) * 256),
     )
   })
+  const regionRendering = ref(false)
   const regionPreview = ref<PreviewResult | null>(null)
   const visibleRegion = computed<Rect | null>(() => {
     const output = layout.value
@@ -163,6 +164,20 @@ export function usePreviewViewport({
       ? { x, y, width: right - x, height: bottom - y }
       : null
   })
+  const regionAllowed = computed(() => {
+    const backing = e.preview
+    const publishedAnnotations
+      = backing?.annotationLayers !== undefined
+        && e.interactivePreview === backing
+    return (
+      !resizing.value
+      && !e.spacingEditing
+      && (!e.interactivePreview || publishedAnnotations)
+      && !e.rendering
+      && !!backing
+      && backing.revision === e.renderRevision
+    )
+  })
   watch(
     [
       () => e.state,
@@ -170,6 +185,8 @@ export function usePreviewViewport({
       () => e.preview,
       () => e.rendering,
       resizing,
+      () => e.spacingEditing,
+      () => e.interactivePreview,
       visibleRegion,
       scale,
     ],
@@ -177,19 +194,12 @@ export function usePreviewViewport({
       const generation = ++regionGeneration
       clearTimeout(regionTimer)
       regionPreview.value = null
+      regionRendering.value = false
       const region = visibleRegion.value
       const backing = e.preview
-      if (
-        resizing.value
-        || e.spacingEditing
-        || e.interactivePreview
-        || !region
-        || !backing
-        || e.rendering
-        || backing.revision !== e.renderRevision
-      ) {
+      if (!regionAllowed.value || !region || !backing)
         return
-      }
+      regionRendering.value = true
       const revision = backing.revision
       const snapshot = JSON.parse(JSON.stringify(e.state))
       snapshot.revision = revision
@@ -209,6 +219,13 @@ export function usePreviewViewport({
             maxSize,
             region,
           )
+          if (generation !== regionGeneration)
+            return
+          if (typeof window.Image === 'function') {
+            const image = new window.Image()
+            image.src = result.dataUrl
+            await image.decode()
+          }
           if (
             generation === regionGeneration
             && revision === e.renderRevision
@@ -221,6 +238,10 @@ export function usePreviewViewport({
         catch (error) {
           if (generation === regionGeneration)
             e.fail(error)
+        }
+        finally {
+          if (generation === regionGeneration)
+            regionRendering.value = false
         }
       }, 180)
     },
@@ -259,6 +280,8 @@ export function usePreviewViewport({
     pan,
     scale,
     regionPreview,
+    regionAllowed,
+    regionRendering,
     wheel,
     panStart,
     clearSelection,

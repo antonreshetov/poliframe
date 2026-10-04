@@ -7,7 +7,7 @@ import sharp from 'sharp'
 import { it } from 'vitest'
 
 import { annotationPreview } from '../src/main/imaging/annotations.ts'
-import { compose } from '../src/main/imaging/composition.ts'
+import { compose, gesturePreview } from '../src/main/imaging/composition.ts'
 import { defaults, identityTransform } from '../src/shared/defaults.ts'
 
 it('layered annotation preview preserves native caption geometry for every preset', async (t) => {
@@ -54,6 +54,15 @@ it('layered annotation preview preserves native caption geometry for every prese
     assert.ok(layered.annotationLayers.length > 0)
     assert.equal(layered.dataUrl, '')
     assert.equal(layered.gestureImages.length, 1)
+    assert.equal(
+      (
+        await gesturePreview(state, [photo], layered.gestureImagesKey, {
+          layout: layered.layout,
+          maxSize: 1200,
+        })
+      ).gestureImages,
+      undefined,
+    )
     const full = await annotationPreview(
       state,
       [photo],

@@ -5,8 +5,8 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import sharp from 'sharp'
-import { inject, it } from 'vitest'
-import { toWorkingPipeline } from '../src/main/imaging/color'
+import { inject, it, vi } from 'vitest'
+import * as color from '../src/main/imaging/color'
 import {
   gestureImages,
   gesturePreview,
@@ -128,7 +128,7 @@ it('combined TIFF transform preserves exact ushort pixels for EXIF rotations, fl
               crop: { x: 0.1, y: 0.15, width: 0.7, height: 0.65 },
             }
             // Original LZW stages are the independent compatibility oracle.
-            let pipeline = await toWorkingPipeline(path)
+            let pipeline = await color.toWorkingPipeline(path)
             let source = oriented
             if (rotation) {
               const normalized = await pipeline.toBuffer()
@@ -190,7 +190,7 @@ it('a restarted render worker honors published gesture keys and sends pixels to 
   t.onTestFinished(() => rm(directory, { recursive: true, force: true }))
   const path = join(directory, 'photo.png')
   await sharp({
-    create: { width: 40, height: 30, channels: 3, background: '#958372' },
+    create: { width: 1200, height: 800, channels: 3, background: '#958372' },
   })
     .png()
     .toFile(path)
@@ -198,8 +198,8 @@ it('a restarted render worker honors published gesture keys and sends pixels to 
     id: 'photo',
     path,
     name: 'photo',
-    width: 40,
-    height: 30,
+    width: 1200,
+    height: 800,
     exif: {},
   }
   const snapshot = defaults()
@@ -214,6 +214,7 @@ it('a restarted render worker honors published gesture keys and sends pixels to 
   t.onTestFinished(() => firstWorker.close())
   const first = await firstWorker.request('preview', payload)
   assert.equal(first.gestureImages.length, 1)
+  assert.equal(first.gestureImages[0].width, 512)
   await firstWorker.close()
   const restartedWorker = new RenderJobs()
   t.onTestFinished(() => restartedWorker.close())
@@ -225,6 +226,13 @@ it('a restarted render worker honors published gesture keys and sends pixels to 
   assert.equal(acknowledged.gestureImages, undefined)
   const freshConsumer = await restartedWorker.request('preview', payload)
   assert.deepEqual(freshConsumer.gestureImages, first.gestureImages)
+  const larger = await restartedWorker.request('preview', {
+    ...payload,
+    maxSize: 1600,
+    knownGestureImagesKey: first.gestureImagesKey,
+  })
+  assert.notEqual(larger.gestureImagesKey, first.gestureImagesKey)
+  assert.equal(larger.gestureImages[0].width, 1200)
   const region = await restartedWorker.request('preview', {
     ...payload,
     region: { x: 0, y: 0, width: 10, height: 10 },
@@ -282,7 +290,7 @@ it('gesture JPEG matches the LZW pipeline across source buckets, transforms and 
       const bucket = [512, 1024, 2200, 4096].find(size => size >= sourceSize)
       const source = bucket
         ? await (
-            await toWorkingPipeline(path)
+            await color.toWorkingPipeline(path)
           )
             .resize({
               width: bucket,
@@ -317,3 +325,103 @@ it('gesture JPEG matches the LZW pipeline across source buckets, transforms and 
     }
   }
 }, 30_000)
+
+it('gesture resolution follows the largest cover requirement and acknowledges only matching pixels', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'poliframe-gesture-size-'))
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'photo.png')
+  await sharp({
+    create: { width: 3000, height: 2000, channels: 3, background: '#789abc' },
+  })
+    .png()
+    .toFile(path)
+  const asset = {
+    id: 'photo',
+    name: 'photo',
+    path,
+    width: 3000,
+    height: 2000,
+    exif: {},
+  }
+  const snapshot = defaults()
+  snapshot.panels = [{ photoId: asset.id, transform: identityTransform() }]
+  const layout = {
+    width: 3000,
+    height: 3000,
+    nativeWidth: 3000,
+    nativeHeight: 3000,
+    dpi: 72,
+    captions: [],
+    masks: [],
+    warnings: [],
+    cells: [
+      { id: 'small', photoId: asset.id, x: 0, y: 0, width: 100, height: 100 },
+      { id: 'large', photoId: asset.id, x: 0, y: 0, width: 1250, height: 1250 },
+    ],
+  }
+  const prepareSource = vi.spyOn(color, 'toWorkingPipeline')
+  t.onTestFinished(() => prepareSource.mockRestore())
+  const sourceReads = () =>
+    prepareSource.mock.calls.filter(([input]) => input === path).length
+  const first = await gesturePreview(snapshot, [asset], undefined, {
+    layout,
+    maxSize: 800,
+  })
+  assert.equal(first.gestureImages![0]!.width, 512)
+  assert.equal(first.gestureImages![0]!.height, 341)
+  layout.cells[1]!.x = 100
+  layout.cells[1]!.width = 1200
+  const moved = await gesturePreview(
+    snapshot,
+    [asset],
+    first.gestureImagesKey,
+    { layout, maxSize: 810 },
+  )
+  assert.equal(moved.gestureImagesKey, first.gestureImagesKey)
+  assert.equal(
+    moved.gestureImages,
+    undefined,
+    'geometry within the bucket needs no JPEG payload',
+  )
+  const zoomed = await gesturePreview(
+    snapshot,
+    [asset],
+    first.gestureImagesKey,
+    { layout, maxSize: 1600 },
+  )
+  assert.notEqual(zoomed.gestureImagesKey, first.gestureImagesKey)
+  assert.equal(zoomed.gestureImages![0]!.width, 1024)
+  assert.equal(
+    sourceReads(),
+    1,
+    '512 to 1024 reuses the prepared source without another original decode',
+  )
+  const full = await gesturePreview(
+    snapshot,
+    [asset],
+    zoomed.gestureImagesKey,
+    { layout, maxSize: 3200 },
+  )
+  assert.equal(full.gestureImages![0]!.width, 2200)
+  assert.notEqual(full.gestureImagesKey, zoomed.gestureImagesKey)
+  snapshot.panels[0]!.transform.rotation = 90
+  snapshot.panels[0]!.transform.crop = { x: 0, y: 0, width: 1, height: 0.25 }
+  // Effective 2000x750 panorama: cover must account for the short axis.
+  const cropped = await gesturePreview(snapshot, [asset], undefined, {
+    layout,
+    maxSize: 800,
+  })
+  assert.equal(cropped.gestureImages![0]!.width, 1024)
+  assert.equal(cropped.gestureImages![0]!.height, 384)
+  snapshot.panels[0]!.transform.crop = { x: 0, y: 0, width: 0.1, height: 0.1 }
+  const tiny = await gesturePreview(snapshot, [asset], undefined, {
+    layout,
+    maxSize: 3200,
+  })
+  assert.equal(tiny.gestureImages![0]!.width, 200)
+  assert.equal(
+    tiny.gestureImages![0]!.height,
+    300,
+    'never enlarge original crop pixels',
+  )
+})

@@ -128,6 +128,9 @@ export async function annotationPreview(
     layout,
     dataUrl: '',
     annotationLayers,
-    ...(await gesturePreview(snapshot, assets, knownGestureImagesKey)),
+    ...(await gesturePreview(snapshot, assets, knownGestureImagesKey, {
+      layout,
+      maxSize,
+    })),
   }
 }
