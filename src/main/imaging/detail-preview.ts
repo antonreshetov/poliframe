@@ -28,6 +28,7 @@ export async function detailPreview(
   resources: string,
   region: Rect,
   maxSize: number,
+  knownDetailKeys: string[] = [],
 ): Promise<PreviewResult | undefined> {
   if (snapshot.caption.enabled || snapshot.watermark.photoId)
     return
@@ -156,6 +157,7 @@ export async function detailPreview(
   }
   if (planned.some(item => item.width * item.height * 3 > 256 * 1024 * 1024))
     return
+  const known = new Set(knownDetailKeys)
   const detailTiles: NonNullable<PreviewResult['detailTiles']> = []
   const keyed = planned.map(item => ({
     ...item,
@@ -189,125 +191,139 @@ export async function detailPreview(
       yScale,
       key,
     } = item
-    const data = await tiles.get(key, async () => {
-      let batch = batches.get(cell.id)
-      if (!batch) {
-        const sourceKey = JSON.stringify([
-          identity,
-          transform.crop,
-          width,
-          height,
-        ])
-        const source = await sources.get(sourceKey, async () => {
-          let pipeline = sharp(asset.path, {
-            limitInputPixels: MAX_IMAGE_PIXELS,
-            failOn: 'error',
-            pages: 1,
-          })
-            .autoOrient()
-            .keepIccProfile()
-          const metadata = await pipeline.metadata()
-          let sourceWidth = metadata.autoOrient.width
-          let sourceHeight = metadata.autoOrient.height
-          // EXIF orientation must complete before an independent user rotation.
-          if (transform.rotation || transform.flipX || transform.flipY) {
-            const oriented = await pipeline
-              .tiff({ compression: 'none' })
-              .toBuffer()
-            const swap = transform.rotation % 180 !== 0
-            const transformed = await sharp(oriented)
-              .keepIccProfile()
-              .rotate(transform.rotation)
-              .flop(swap ? transform.flipY : transform.flipX)
-              .flip(swap ? transform.flipX : transform.flipY)
-              .tiff({ compression: 'none' })
-              .toBuffer()
-            pipeline = sharp(transformed).keepIccProfile()
-            const info = await pipeline.metadata()
-            sourceWidth = info.width
-            sourceHeight = info.height
-          }
-          const left = Math.min(
-            sourceWidth - 1,
-            Math.round(transform.crop.x * sourceWidth),
-          )
-          const top = Math.min(
-            sourceHeight - 1,
-            Math.round(transform.crop.y * sourceHeight),
-          )
-          return pipeline
-            .extract({
-              left,
-              top,
-              width: Math.min(
-                sourceWidth - left,
-                Math.max(1, Math.round(transform.crop.width * sourceWidth)),
-              ),
-              height: Math.min(
-                sourceHeight - top,
-                Math.max(1, Math.round(transform.crop.height * sourceHeight)),
-              ),
+    const tileKey = `${cell.id}:${key}`
+    const data = known.has(tileKey)
+      ? undefined
+      : await tiles.get(key, async () => {
+          let batch = batches.get(cell.id)
+          if (!batch) {
+            const sourceKey = JSON.stringify([
+              identity,
+              transform.crop,
+              width,
+              height,
+            ])
+            const source = await sources.get(sourceKey, async () => {
+              let pipeline = sharp(asset.path, {
+                limitInputPixels: MAX_IMAGE_PIXELS,
+                failOn: 'error',
+                pages: 1,
+              })
+                .autoOrient()
+                .keepIccProfile()
+              const metadata = await pipeline.metadata()
+              let sourceWidth = metadata.autoOrient.width
+              let sourceHeight = metadata.autoOrient.height
+              // EXIF orientation must complete before an independent user rotation.
+              if (transform.rotation || transform.flipX || transform.flipY) {
+                const oriented = await pipeline
+                  .tiff({ compression: 'none' })
+                  .toBuffer()
+                const swap = transform.rotation % 180 !== 0
+                const transformed = await sharp(oriented)
+                  .keepIccProfile()
+                  .rotate(transform.rotation)
+                  .flop(swap ? transform.flipY : transform.flipX)
+                  .flip(swap ? transform.flipX : transform.flipY)
+                  .tiff({ compression: 'none' })
+                  .toBuffer()
+                pipeline = sharp(transformed).keepIccProfile()
+                const info = await pipeline.metadata()
+                sourceWidth = info.width
+                sourceHeight = info.height
+              }
+              const left = Math.min(
+                sourceWidth - 1,
+                Math.round(transform.crop.x * sourceWidth),
+              )
+              const top = Math.min(
+                sourceHeight - 1,
+                Math.round(transform.crop.y * sourceHeight),
+              )
+              return pipeline
+                .extract({
+                  left,
+                  top,
+                  width: Math.min(
+                    sourceWidth - left,
+                    Math.max(1, Math.round(transform.crop.width * sourceWidth)),
+                  ),
+                  height: Math.min(
+                    sourceHeight - top,
+                    Math.max(
+                      1,
+                      Math.round(transform.crop.height * sourceHeight),
+                    ),
+                  ),
+                })
+                .resize(width, height, {
+                  fit: 'cover',
+                  fastShrinkOnLoad: false,
+                })
+                .tiff({ compression: 'none' })
+                .toBuffer()
             })
-            .resize(width, height, { fit: 'cover', fastShrinkOnLoad: false })
-            .tiff({ compression: 'none' })
+            const missing = keyed.filter(
+              other =>
+                other.cell.id === cell.id
+                && !known.has(`${other.cell.id}:${other.key}`)
+                && !tiles.peek(other.key),
+            )
+            const left = Math.min(...missing.map(other => other.tile.left))
+            const top = Math.min(...missing.map(other => other.tile.top))
+            const right = Math.max(
+              ...missing.map(other => other.tile.left + other.tile.width),
+            )
+            const bottom = Math.max(
+              ...missing.map(other => other.tile.top + other.tile.height),
+            )
+            // Convert the missing visible rectangle once, rather than opening an ICC
+            // transform for each tiny tile. A batch never spans different photo cells.
+            const pixels = await sharp(source)
+              .keepIccProfile()
+              .extract({ left, top, width: right - left, height: bottom - top })
+              .tiff({ compression: 'none' })
+              .toBuffer()
+            const working = await (
+              await toWorkingPipeline(pixels)
+            )
+              .tiff({ compression: 'none' })
+              .toBuffer()
+            const data = await sharp(working)
+              .withIccProfile(outputProfile(snapshot.output.profile, resources))
+              .toColourspace('srgb')
+              .tiff({ compression: 'none' })
+              .toBuffer()
+            batch = { data, left, top }
+            batches.set(cell.id, batch)
+          }
+          return sharp(batch.data)
+            .keepIccProfile()
+            .extract({
+              left: tile.left - batch.left,
+              top: tile.top - batch.top,
+              width: tile.width,
+              height: tile.height,
+            })
+            .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
             .toBuffer()
         })
-        const missing = keyed.filter(
-          other => other.cell.id === cell.id && !tiles.peek(other.key),
-        )
-        const left = Math.min(...missing.map(other => other.tile.left))
-        const top = Math.min(...missing.map(other => other.tile.top))
-        const right = Math.max(
-          ...missing.map(other => other.tile.left + other.tile.width),
-        )
-        const bottom = Math.max(
-          ...missing.map(other => other.tile.top + other.tile.height),
-        )
-        // Convert the missing visible rectangle once, rather than opening an ICC
-        // transform for each tiny tile. A batch never spans different photo cells.
-        const pixels = await sharp(source)
-          .keepIccProfile()
-          .extract({ left, top, width: right - left, height: bottom - top })
-          .tiff({ compression: 'none' })
-          .toBuffer()
-        const working = await (
-          await toWorkingPipeline(pixels)
-        )
-          .tiff({ compression: 'none' })
-          .toBuffer()
-        const data = await sharp(working)
-          .withIccProfile(outputProfile(snapshot.output.profile, resources))
-          .toColourspace('srgb')
-          .tiff({ compression: 'none' })
-          .toBuffer()
-        batch = { data, left, top }
-        batches.set(cell.id, batch)
-      }
-      return sharp(batch.data)
-        .keepIccProfile()
-        .extract({
-          left: tile.left - batch.left,
-          top: tile.top - batch.top,
-          width: tile.width,
-          height: tile.height,
-        })
-        .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
-        .toBuffer()
-    })
     detailTiles.push({
-      key: `${cell.id}:${key}`,
+      key: tileKey,
       x: cell.x + tile.left / xScale,
       y: cell.y + tile.top / yScale,
       width: tile.width / xScale,
       height: tile.height / yScale,
       pixelWidth: tile.width,
       pixelHeight: tile.height,
-      dataUrl: `data:image/jpeg;base64,${data.toString('base64')}`,
+      data,
     })
   }
   const displayCost = detailTiles.reduce(
     (sum, tile) =>
-      sum + tile.pixelWidth * tile.pixelHeight * 8 + tile.dataUrl.length * 2,
+      sum
+      + tile.pixelWidth * tile.pixelHeight * 8
+      + (tile.data?.byteLength ?? 0),
     0,
   )
   if (displayCost > displayBudget)

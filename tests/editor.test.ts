@@ -1285,7 +1285,12 @@ it('local geometry refuses oversized mounted thumbnail copies until the bounded 
   assert.equal(editor.interactivePreview, null)
 })
 
-it('detail tiles stay visible during pan, decode as a bounded set, and disappear on edits', async () => {
+it('detail tiles stay visible during pan, decode as a bounded set, and disappear on edits', async (t) => {
+  t.onTestFinished(() => vi.restoreAllMocks())
+  vi.spyOn(URL, 'createObjectURL').mockImplementation(
+    () => `blob:${Math.random()}`,
+  )
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
   const output = {
     width: 2000,
     height: 1000,
@@ -1346,7 +1351,7 @@ it('detail tiles stay visible during pan, decode as a bounded set, and disappear
   }
   const tile = {
     key: 'tile',
-    dataUrl: 'tile-pixels',
+    data: new Uint8Array([1, 2, 3]),
     x: 0,
     y: 0,
     width: 512,
@@ -1363,8 +1368,9 @@ it('detail tiles stay visible during pan, decode as a bounded set, and disappear
     dataUrl: '',
     detailTiles: [tile],
   })
-  await flush()
-  assert.deepEqual(decoded, ['tile-pixels'])
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(decoded.length, 1)
+  assert.match(decoded[0], /^blob:/)
   controls.pan.value = { x: 60, y: 0 }
   assert.equal(
     controls.regionPreview.value.detailTiles[0].key,
@@ -1382,7 +1388,7 @@ it('detail tiles stay visible during pan, decode as a bounded set, and disappear
       { ...tile, key: 'too-big', pixelWidth: 4096, pixelHeight: 4096 },
     ],
   })
-  await flush()
+  await new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(
     decoded.length,
     1,
@@ -1400,7 +1406,7 @@ it('detail tiles stay visible during pan, decode as a bounded set, and disappear
     dataUrl: '',
     detailTiles: [{ ...tile, key: 'retry' }],
   })
-  await flush()
+  await new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(controls.regionPreview.value.detailTiles[0].key, 'retry')
   editor.renderRevision++
   assert.equal(

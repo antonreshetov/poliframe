@@ -127,7 +127,9 @@ export interface PreviewResult {
     key: string
     pixelWidth: number
     pixelHeight: number
-    dataUrl: string
+    data?: Uint8Array
+    /** Renderer-owned Blob URL; never sent by the worker. */
+    dataUrl?: string
   })[]
   annotationLayers?: (Rect & { dataUrl: string, opacity?: number })[]
   gestureImagesKey?: string
@@ -168,6 +170,7 @@ export interface AppApi {
     region?: Rect,
     annotationsOnly?: boolean,
     knownGestureImagesKey?: string,
+    knownDetailKeys?: string[],
   ) => Promise<PreviewResult>
   exportImage: (
     snapshot: Composition,

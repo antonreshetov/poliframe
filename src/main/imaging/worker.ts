@@ -19,6 +19,7 @@ parentPort!.on(
     maxSize?: number
     annotationsOnly?: boolean
     knownGestureImagesKey?: string
+    knownDetailKeys?: string[]
     destination?: string
   }) => {
     try {
@@ -40,6 +41,7 @@ parentPort!.on(
           job.resources,
           job.region,
           job.maxSize ?? 2200,
+          job.knownDetailKeys,
         )
         if (result) {
           parentPort!.postMessage({ id: job.id, result })

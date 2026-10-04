@@ -153,3 +153,27 @@ it('preview validates acknowledgment keys and keeps regions independent', async 
   )
   assert.equal(calls.at(-1)[1].knownGestureImagesKey, undefined)
 })
+
+it('validates bounded detail acknowledgments and forwards them only for regions', async () => {
+  const { handlers, calls, snapshot } = await setup()
+  const preview = handlers.get('images:preview')
+  const region = { x: 0, y: 0, width: 10, height: 10 }
+  for (const keys of [
+    null,
+    42,
+    {},
+    [''],
+    [42],
+    ['x'.repeat(513)],
+    Array.from({ length: 513 }).fill('key'),
+  ]) {
+    assert.throws(
+      () => preview(snapshot, 1200, region, false, undefined, keys),
+      /Invalid detail tile keys/,
+    )
+  }
+  await preview(snapshot, 1200, region, false, undefined, ['tile-key'])
+  assert.deepEqual(calls.at(-1)[1].knownDetailKeys, ['tile-key'])
+  await preview(snapshot, 1200, undefined, false, undefined, ['tile-key'])
+  assert.equal(calls.at(-1)[1].knownDetailKeys, undefined)
+})

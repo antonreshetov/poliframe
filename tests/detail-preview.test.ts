@@ -86,9 +86,7 @@ it('detail tiles match exact orientation, flips, crop and profile at native scal
           .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
           .toBuffer()
         const raw = (data: Buffer) => sharp(data).raw().toBuffer()
-        const a = await raw(
-          Buffer.from(actual.detailTiles![0]!.dataUrl.split(',')[1]!, 'base64'),
-        )
+        const a = await raw(Buffer.from(actual.detailTiles![0]!.data!))
         const b = await raw(expected)
         assert.equal(a.length, b.length)
         const error
@@ -153,7 +151,9 @@ it('fixed tiles cover cells, reuse overlapping pan pixels, invalidate content an
   assert.ok(
     crossed!.detailTiles!.some(tile =>
       first!.detailTiles!.some(
-        old => old.key === tile.key && old.dataUrl === tile.dataUrl,
+        old =>
+          old.key === tile.key
+          && Buffer.from(old.data!).equals(Buffer.from(tile.data!)),
       ),
     ),
   )
@@ -171,7 +171,7 @@ it('fixed tiles cover cells, reuse overlapping pan pixels, invalidate content an
   assert.equal(area, 2400 * 1600)
   const cost = full!.detailTiles!.reduce(
     (sum, tile) =>
-      sum + tile.pixelWidth * tile.pixelHeight * 8 + tile.dataUrl.length * 2,
+      sum + tile.pixelWidth * tile.pixelHeight * 8 + tile.data!.byteLength,
     0,
   )
   assert.ok(cost <= 64 * 1024 * 1024)
@@ -262,4 +262,83 @@ it('fixed tiles cover cells, reuse overlapping pan pixels, invalidate content an
     ),
     undefined,
   )
+})
+
+it('sends only missing tile bytes and keeps acknowledgments valid across worker restarts', async (t) => {
+  const { createRequire } = await import('node:module')
+  const { inject } = await import('vitest')
+  const { RenderJobs } = createRequire(import.meta.url)(
+    resolve(inject('workerBuild'), 'main/services/render-jobs.js'),
+  )
+  const directory = await mkdtemp(join(tmpdir(), 'poliframe-tile-transfer-'))
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'photo.png')
+  await sharp({
+    create: { width: 1600, height: 1200, channels: 3, background: '#958372' },
+  })
+    .png()
+    .toFile(path)
+  const asset = {
+    id: 'photo',
+    name: 'photo',
+    path,
+    thumbnail: '',
+    width: 1600,
+    height: 1200,
+    exif: {},
+  }
+  const snapshot = defaults()
+  snapshot.panels = [{ photoId: asset.id, transform: identityTransform() }]
+  const payload = {
+    snapshot,
+    assets: [asset],
+    resources: resolve('resources'),
+    maxSize: 700,
+    region: { x: 0, y: 0, width: 700, height: 700 },
+  }
+  const worker = new RenderJobs()
+  t.onTestFinished(() => worker.close())
+  const first = await worker.request('preview', payload)
+  assert.ok(
+    first.detailTiles.every(
+      tile =>
+        tile.data instanceof Uint8Array
+        && tile.data.byteLength > 0
+        && tile.dataUrl === undefined,
+    ),
+  )
+  const knownDetailKeys = first.detailTiles.map(tile => tile.key)
+  const reused = await worker.request('preview', {
+    ...payload,
+    knownDetailKeys,
+  })
+  assert.ok(reused.detailTiles.every(tile => tile.data === undefined))
+  const moved = await worker.request('preview', {
+    ...payload,
+    region: { ...payload.region, x: 200 },
+    knownDetailKeys,
+  })
+  assert.ok(moved.detailTiles.some(tile => tile.data))
+  assert.ok(moved.detailTiles.some(tile => !tile.data))
+  await worker.close()
+  const restarted = new RenderJobs()
+  t.onTestFinished(() => restarted.close())
+  const acknowledged = await restarted.request('preview', {
+    ...payload,
+    knownDetailKeys,
+  })
+  assert.ok(
+    acknowledged.detailTiles.every(tile => tile.data === undefined),
+    'content keys do not depend on worker-local cache state',
+  )
+  const missing = await restarted.request('preview', {
+    ...payload,
+    knownDetailKeys: knownDetailKeys.slice(1),
+  })
+  assert.equal(
+    missing.detailTiles.filter(tile => tile.data).length,
+    1,
+    'an evicted renderer resource is resent',
+  )
+  assert.deepEqual(missing.detailTiles[0].data, first.detailTiles[0].data)
 })

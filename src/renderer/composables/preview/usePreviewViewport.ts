@@ -4,8 +4,17 @@ import type {
   PreviewResult,
   Rect,
 } from '../../../shared/contracts'
-import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
+import {
+  computed,
+  onMounted,
+  onScopeDispose,
+  onUnmounted,
+  ref,
+  watch,
+  watchEffect,
+} from 'vue'
 import { useEditorContext } from '../useEditor'
+import { PreviewTileCache } from './tile-cache'
 
 interface ViewportDependencies {
   layout: Readonly<Ref<LayoutResult | undefined>>
@@ -145,6 +154,18 @@ export function usePreviewViewport({
   })
   const regionRendering = ref(false)
   const regionPreview = ref<PreviewResult | null>(null)
+  const tileCache = new PreviewTileCache((key) => {
+    if (completed?.result.detailTiles?.some(tile => tile.key === key))
+      completed = undefined
+    if (regionPreview.value?.detailTiles?.some(tile => tile.key === key))
+      regionPreview.value = null
+  })
+  onScopeDispose(() => {
+    disposed = true
+    requestSequence++
+    clearTimeout(regionTimer)
+    tileCache.clear()
+  })
   const visibleRegion = computed<Rect | null>(() => {
     const output = layout.value
     if (!output || zoom() === null || scale.value <= 0)
@@ -207,6 +228,7 @@ export function usePreviewViewport({
         regionGeneration++
         completed = undefined
         pending = undefined
+        tileCache.clear()
       }
       const generation = regionGeneration
       clearTimeout(regionTimer)
@@ -270,6 +292,9 @@ export function usePreviewViewport({
                 snapshot,
                 maxSize,
                 region,
+                undefined,
+                undefined,
+                tileCache.keys(),
               )
               if (
                 disposed
@@ -279,73 +304,53 @@ export function usePreviewViewport({
               ) {
                 return
               }
-              const factor = Math.min(
-                1,
-                maxSize / Math.max(region.width, region.height),
-              )
-              const images = result.detailTiles ?? [
-                {
-                  dataUrl: result.dataUrl,
-                  pixelWidth: Math.ceil(region.width * factor),
-                  pixelHeight: Math.ceil(region.height * factor),
-                },
-              ]
-              const expectedCost = images.reduce(
-                (sum, item) =>
-                  sum
-                  + item.dataUrl.length * 2
-                  + item.pixelWidth * item.pixelHeight * 8,
-                0,
-              )
-              if (expectedCost > 64 * 1024 * 1024)
-                throw new Error('Preview region exceeds the memory budget')
-              // Keep settled tiles visible while fetching. Release them before
-              // decoding a replacement if both sets would exceed the allowance.
-              const previousCost = (
-                regionPreview.value?.detailTiles ?? []
-              ).reduce(
-                (sum, item) =>
-                  sum
-                  + item.dataUrl.length * 2
-                  + item.pixelWidth * item.pixelHeight * 8,
-                0,
-              )
-              if (previousCost + expectedCost > 64 * 1024 * 1024)
-                regionPreview.value = null
-              completed = undefined
-              let cost = 0
-              for (const item of images) {
-                if (
-                  disposed
-                  || generation !== regionGeneration
-                  || request !== requestSequence
-                ) {
+              const current = () =>
+                !disposed
+                && generation === regionGeneration
+                && request === requestSequence
+              if (result.detailTiles) {
+                const loaded = await tileCache.load(
+                  result.detailTiles,
+                  current,
+                )
+                if (!loaded || !current())
                   return
-                }
+                result.detailTiles = loaded
+              }
+              else {
+                // The exact composited ROI and the tile cache share one allowance.
+                tileCache.clear()
+                completed = undefined
+                const factor = Math.min(
+                  1,
+                  maxSize / Math.max(region.width, region.height),
+                )
+                const pixels
+                  = Math.ceil(region.width * factor)
+                    * Math.ceil(region.height * factor)
+                if (result.dataUrl.length * 2 + pixels * 8 > 64 * 1024 * 1024)
+                  throw new Error('Preview region exceeds the memory budget')
                 const image
                   = typeof window.Image === 'function'
                     ? new window.Image()
                     : undefined
                 if (image) {
-                  image.src = item.dataUrl
+                  image.src = result.dataUrl
                   await image.decode()
                 }
-                cost
-                  += item.dataUrl.length * 2
-                    + (image?.naturalWidth && image.naturalHeight
-                      ? image.naturalWidth * image.naturalHeight
-                      : item.pixelWidth * item.pixelHeight)
-                    * 8
+                if (!current())
+                  return
+                const decodedPixels
+                  = image?.naturalWidth && image.naturalHeight
+                    ? image.naturalWidth * image.naturalHeight
+                    : pixels
+                if (
+                  result.dataUrl.length * 2 + decodedPixels * 8
+                  > 64 * 1024 * 1024
+                ) {
+                  throw new Error('Preview region exceeds the memory budget')
+                }
               }
-              if (
-                disposed
-                || generation !== regionGeneration
-                || request !== requestSequence
-              ) {
-                return
-              }
-              if (cost > 64 * 1024 * 1024)
-                throw new Error('Preview region exceeds the memory budget')
               completed = { key, result }
               if (currentKey === key && regionAllowed.value)
                 regionPreview.value = result

@@ -11,6 +11,7 @@ const api: AppApi = {
     region,
     annotationsOnly,
     knownGestureImagesKey,
+    knownDetailKeys,
   ) =>
     ipcRenderer.invoke(
       'images:preview',
@@ -19,6 +20,7 @@ const api: AppApi = {
       region,
       annotationsOnly,
       knownGestureImagesKey,
+      knownDetailKeys,
     ),
   exportImage: snapshot => ipcRenderer.invoke('images:export', snapshot),
   cancelExport: () => ipcRenderer.invoke('images:cancel'),
