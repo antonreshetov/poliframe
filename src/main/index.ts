@@ -1,11 +1,13 @@
 import type { IpcMainInvokeEvent } from 'electron'
 import type { AppNotification } from '../shared/contracts'
+import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   nativeImage,
@@ -185,7 +187,27 @@ app.whenReady().then(async () => {
       {
         label: 'Poliframe',
         submenu: [
-          { role: 'about' },
+          {
+            label: 'About Poliframe',
+            click: () => {
+              void dialog.showMessageBox(mainWindow, {
+                title: 'Poliframe',
+                message: 'Poliframe',
+                type: 'info',
+                buttons: ['OK'],
+                detail: [
+                  `Version: ${app.getVersion()}`,
+                  `Electron: ${process.versions.electron}`,
+                  `Chrome: ${process.versions.chrome}`,
+                  `Node.js: ${process.versions.node}`,
+                  `V8: ${process.versions.v8}`,
+                  `OS: ${os.type()} ${os.arch()} ${os.release()}`,
+                  `©${new Date().getFullYear()} Anton Reshetov`,
+                  '<reshetov.art@gmail.com>',
+                ].join('\n'),
+              })
+            },
+          },
           {
             id: 'license',
             label: 'License…',
@@ -223,9 +245,35 @@ app.whenReady().then(async () => {
         role: 'help',
         submenu: [
           {
-            label: 'Poliframe Website',
+            label: 'View in GitHub',
             click: () => {
-              void shell.openExternal('https://antonreshetov.com/poliframe')
+              void shell.openExternal(
+                'https://github.com/antonreshetov/poliframe',
+              )
+            },
+          },
+          {
+            label: 'Change Log',
+            click: () => {
+              void shell.openExternal(
+                'https://github.com/antonreshetov/poliframe/releases',
+              )
+            },
+          },
+          {
+            label: 'Report Issue',
+            click: () => {
+              void shell.openExternal(
+                'https://github.com/antonreshetov/poliframe/issues/new/choose',
+              )
+            },
+          },
+          {
+            label: 'Give a Star',
+            click: () => {
+              void shell.openExternal(
+                'https://github.com/antonreshetov/poliframe',
+              )
             },
           },
           { type: 'separator' },
