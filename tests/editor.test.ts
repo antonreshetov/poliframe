@@ -50,11 +50,13 @@ async function flush() {
   await Promise.resolve()
   await vue.nextTick()
 }
-function setup(_t) {
+function setup(_t, platform = 'darwin') {
   const notifications = []
   const registry = new Set()
   let sequence = 0
   const api = {
+    info: async () => ({ platform, version: 'test' }),
+    revealFile: async () => {},
     importImages: async () => {
       assert.ok(registry.size < 160, 'main-process image registry exhausted')
       const id = `photo-${++sequence}`
@@ -1416,3 +1418,43 @@ it('detail tiles stay visible during pan, decode as a bounded set, and disappear
     'old tiles must never survive a composition edit',
   )
 })
+
+it('shows export activity only after processing starts and clears it on failure', async (t) => {
+  const { editor, api } = setup(t)
+  await editor.add()
+  let start
+  let reject
+  api.exportImage = (_snapshot, onStarted) => {
+    start = onStarted
+    return new Promise((_resolve, fail) => {
+      reject = fail
+    })
+  }
+  const pending = editor.exportImage()
+  assert.equal(editor.busy, true)
+  assert.equal(editor.exporting, false)
+  start()
+  assert.equal(editor.exporting, true)
+  reject(new Error('Export failed'))
+  await pending
+  assert.equal(editor.exporting, false)
+  assert.equal(editor.busy, false)
+})
+
+for (const platform of ['darwin', 'win32', 'linux']) {
+  it(`offers a Show action after export on ${platform}`, async (t) => {
+    const { editor, api, notifications } = setup(t, platform)
+    await editor.add()
+    api.exportImage = async () => ({
+      status: 'saved',
+      path: '/tmp/export.jpg',
+    })
+    const reveal = vi.fn(async () => {})
+    api.revealFile = reveal
+    await editor.exportImage()
+    const action = notifications.at(-1).options.action
+    assert.equal(action.label, 'Show')
+    action.onClick()
+    assert.deepEqual(reveal.mock.calls, [['/tmp/export.jpg']])
+  })
+}

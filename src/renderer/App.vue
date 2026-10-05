@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Download, ZoomIn, ZoomOut } from '@lucide/vue'
+import { Download, Loader2, ZoomIn, ZoomOut } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
 import { computed, onUnmounted, provide, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
@@ -165,9 +165,14 @@ watch(
         </span>
         <ExportSettings /><Button
           :disabled="!e.canExport"
+          :aria-busy="e.exporting"
           @click="e.exportImage"
         >
-          <Download />Export…
+          <Loader2
+            v-if="e.exporting"
+            class="animate-spin"
+          />
+          <Download v-else />Export…
         </Button>
       </footer>
     </section>
