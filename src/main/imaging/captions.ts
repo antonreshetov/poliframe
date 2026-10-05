@@ -156,9 +156,13 @@ export function createCaptionRenderer(
           .filter(k => fields.includes(k))
           .map(k => photo?.exif[k as keyof Photo['exif']])
           .filter(Boolean)
+      const copyright = s.caption.copyright.trim()
       const text: Record<Role, string> = {
         title: s.caption.title.trim(),
-        copyright: s.caption.copyright.trim(),
+        copyright:
+          copyright && !copyright.startsWith('©')
+            ? `© ${copyright}`
+            : copyright,
         camera: values(['camera', 'lens']).join(
           s.caption.style === 'classic' ? ' — ' : ' · ',
         ),

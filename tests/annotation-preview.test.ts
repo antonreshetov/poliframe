@@ -349,3 +349,27 @@ it.each(['srgb', 'p3'] as const)(
     }
   },
 )
+
+it('copyright adds the symbol once in preview and export and leaves empty captions blank', async () => {
+  const { createCaptionRenderer }
+    = await import('../src/main/imaging/captions.ts')
+  const state = defaults()
+  state.caption.title = ''
+  state.caption.showExif = false
+  for (const preview of [true, false]) {
+    const render = () =>
+      createCaptionRenderer(
+        state,
+        new Map(),
+        resolve('resources'),
+        preview,
+      )(null, 600, 1)
+    state.caption.copyright = '  Anton Reshetov  '
+    const automatic = await render()
+    state.caption.copyright = '© Anton Reshetov'
+    assert.deepEqual(await render(), automatic)
+    assert.ok(automatic.pieces.length > 0)
+    state.caption.copyright = '   '
+    assert.equal((await render()).pieces.length, 0)
+  }
+})
