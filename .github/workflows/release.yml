@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-15, windows-latest]
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -38,12 +38,18 @@ jobs:
         with:
           version: 10.29.2
 
-      - name: Use Node.js 24
+      - name: Use Node.js 24.14.1
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.14.1
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Python for node-gyp (macOS)
+        if: startsWith(matrix.os, 'macos')
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       # Strict install for tagged releases (reproducible builds)
       - name: Install dependencies (frozen lockfile)
