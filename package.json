@@ -2,12 +2,12 @@
   "name": "poliframe",
   "version": "0.0.0",
   "packageManager": "pnpm@10.29.2",
-  "description": "Compose photographs, captions and print layouts",
+  "description": "Combine photos into clean diptychs, photo strips and custom grids",
   "author": {
     "name": "Anton Reshetov",
     "email": "reshetov.art@gmail.com"
   },
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "repository": "https://github.com/antonreshetov/poliframe",
   "main": "build/main/index.js",
   "engines": {
