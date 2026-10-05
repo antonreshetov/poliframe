@@ -11,7 +11,7 @@ function deferred() {
   })
   return { promise, complete }
 }
-async function setup() {
+async function setup(onExportSaved?: () => boolean) {
   const handlers = new Map()
   const calls = []
   let window = {
@@ -56,7 +56,13 @@ async function setup() {
   const exports = await import('../src/main/ipc/images.ts')
   const lifecycle = exports.registerImageHandlers(
     (name, handler) => handlers.set(name, handler),
-    { getWindow: () => window, assets, jobs, resources: '/resources' },
+    {
+      getWindow: () => window,
+      assets,
+      jobs,
+      resources: '/resources',
+      onExportSaved,
+    },
   )
   const snapshot = defaults()
   snapshot.panels = [{ photoId: 'photo', transform: identityTransform() }]
@@ -209,4 +215,29 @@ it('reveals an absolute exported file path through the system file manager', asy
     handlers.get('images:reveal')('relative.jpg'),
     /Invalid file path/,
   )
+})
+
+it('records support milestones only after a successful export and never on cancellation or failure', async () => {
+  const record = vi.fn(() => true)
+  const { handlers, snapshot, dialog, jobs, calls } = await setup(record)
+  dialog.showSaveDialog = async () => ({ canceled: true })
+  await handlers.get('images:export')(snapshot)
+  assert.equal(record.mock.calls.length, 0)
+  dialog.showSaveDialog = async () => ({ filePath: '/result.jpg' })
+  jobs.request = async () => {
+    throw new Error('Export failed')
+  }
+  await assert.rejects(
+    handlers.get('images:export')(snapshot),
+    /Export failed/,
+  )
+  assert.equal(record.mock.calls.length, 0)
+  jobs.request = async () => ({})
+  record.mockImplementation(() => {
+    assert.ok(calls.some(([kind]) => kind === 'rename'))
+    return true
+  })
+  const result = await handlers.get('images:export')(snapshot)
+  assert.equal(result.supportPrompt, true)
+  assert.equal(record.mock.calls.length, 1)
 })

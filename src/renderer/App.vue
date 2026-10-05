@@ -9,11 +9,14 @@ import CropEditor from '@/components/editor/CropEditor.vue'
 import ExportSettings from '@/components/editor/ExportSettings.vue'
 import PresetsMenu from '@/components/editor/PresetsMenu.vue'
 import PreviewCanvas from '@/components/editor/PreviewCanvas.vue'
+import SupporterDialog from '@/components/editor/SupporterDialog.vue'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { editorKey, useEditor } from '@/composables/useEditor'
+import { useSupporter } from '@/composables/useSupporter'
 
+const supporter = useSupporter()
 const api = window.poliframe
 const e = useEditor()
 const stopNotifications = api.onNotification((notification) => {
@@ -84,7 +87,17 @@ watch(
   <main class="editor-shell">
     <header class="titlebar">
       <span>Poliframe</span>
+      <Button
+        v-if="supporter.status.value && !supporter.status.value.active"
+        variant="ghost"
+        size="sm"
+        class="supporter-button text-muted-foreground"
+        @click="supporter.open.value = true"
+      >
+        Unsponsored
+      </Button>
     </header>
+    <SupporterDialog />
     <aside class="sidebar">
       <Tabs
         default-value="compose"
@@ -246,5 +259,12 @@ watch(
   padding: 10px 16px;
   border-top: 1px solid var(--border);
   min-height: 44px;
+}
+</style>
+
+<style scoped>
+.supporter-button {
+  margin-left: auto;
+  -webkit-app-region: no-drag;
 }
 </style>

@@ -25,6 +25,7 @@
     "build:linux": "vite build && npm run build:main && electron-builder --linux --x64",
     "build:all": "vite build && npm run build:main && npm run build:mac && npm run build:win && npm run build:linux",
     "build:main": "tsc -p tsconfig.main.json",
+    "license:issue": "node scripts/license/issue.js",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
     "release": "bumpp -c 'build: release v' -t",

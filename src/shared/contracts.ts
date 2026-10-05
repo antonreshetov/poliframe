@@ -157,7 +157,18 @@ export interface AppNotification {
   description?: string
   action?: 'install-update'
 }
+export interface SupporterStatus {
+  active: boolean
+  name: string | null
+  email: string | null
+}
 export interface AppApi {
+  supporter: {
+    onShowLicense: (callback: () => void) => () => void
+    status: () => Promise<SupporterStatus>
+    activate: (key: string) => Promise<SupporterStatus>
+    open: (destination: 'gumroad' | 'paypal' | 'request') => Promise<void>
+  }
   importImages: (
     paths?: string[],
   ) => Promise<{ photos: Photo[], errors: string[] }>
@@ -174,7 +185,11 @@ export interface AppApi {
   exportImage: (
     snapshot: Composition,
     onStarted?: () => void,
-  ) => Promise<{ status: 'saved' | 'cancelled', path?: string }>
+  ) => Promise<{
+    status: 'saved' | 'cancelled'
+    path?: string
+    supportPrompt?: boolean
+  }>
   revealFile: (path: string) => Promise<void>
   cancelExport: () => Promise<void>
   presets: {

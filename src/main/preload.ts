@@ -2,6 +2,17 @@ import type { AppApi, AppNotification } from '../shared/contracts'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const api: AppApi = {
+  supporter: {
+    onShowLicense: (callback) => {
+      const listener = () => callback()
+      ipcRenderer.on('supporter:show-license', listener)
+      return () =>
+        ipcRenderer.removeListener('supporter:show-license', listener)
+    },
+    status: () => ipcRenderer.invoke('supporter:status'),
+    activate: key => ipcRenderer.invoke('supporter:activate', key),
+    open: destination => ipcRenderer.invoke('supporter:open', destination),
+  },
   importImages: paths => ipcRenderer.invoke('images:import', paths),
   importLogo: () => ipcRenderer.invoke('images:logo'),
   releaseImages: ids => ipcRenderer.invoke('images:release', ids),
