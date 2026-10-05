@@ -13,11 +13,18 @@ interface ImageHandlerDependencies {
   assets: AssetRegistry
   jobs: RenderJobs
   resources: string
+  onExportSaved?: () => boolean
 }
 
 export function registerImageHandlers(
   handle: (channel: string, fn: (...args: any[]) => unknown) => void,
-  { getWindow, assets, jobs, resources }: ImageHandlerDependencies,
+  {
+    getWindow,
+    assets,
+    jobs,
+    resources,
+    onExportSaved,
+  }: ImageHandlerDependencies,
 ) {
   let exporting = false
   let exportGeneration = 0
@@ -254,7 +261,18 @@ export function registerImageHandlers(
       if (generation !== exportGeneration)
         return { status: 'cancelled' }
       await rename(temporary, destination)
-      return { status: 'saved', path: destination }
+      let supportPrompt = false
+      try {
+        supportPrompt = onExportSaved?.() ?? false
+      }
+      catch (error) {
+        console.error('Could not record export count', error)
+      }
+      return {
+        status: 'saved',
+        path: destination,
+        ...(supportPrompt ? { supportPrompt } : {}),
+      }
     }
     catch (error) {
       if (generation !== exportGeneration)

@@ -11,10 +11,11 @@ import {
 } from 'vue'
 import { toast } from 'vue-sonner'
 import { defaults, identityTransform } from '../../shared/defaults'
-
 import { leaves, useEditorGrid } from './editor/useEditorGrid'
+
 import { useEditorPresets } from './editor/useEditorPresets'
 import { useEditorRendering } from './editor/useEditorRendering'
+import { useSupporter } from './useSupporter'
 
 export { leaves } from './editor/useEditorGrid'
 
@@ -244,6 +245,8 @@ export function useEditor() {
         },
       )
       if (result.status === 'saved') {
+        if (result.supportPrompt)
+          useSupporter().prompt()
         const path = result.path
         toast.success('Image exported', {
           description: path,

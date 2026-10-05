@@ -15,6 +15,7 @@ import { registerImageHandlers } from './ipc/images'
 import { AssetRegistry } from './services/assets'
 import { PresetStore } from './services/presets'
 import { RenderJobs } from './services/render-jobs'
+import { SupporterService } from './services/supporter'
 import { createStore } from './store'
 import { checkForUpdates, initializeUpdates, installUpdate } from './updates'
 
@@ -26,6 +27,7 @@ app.setPath(
   path.join(app.getPath('appData'), 'Poliframe Electron'),
 )
 let store: Awaited<ReturnType<typeof createStore>>
+let supporter: SupporterService
 let mainWindow: BrowserWindow
 let isQuitting = false
 let cleaned = false
@@ -67,6 +69,7 @@ const { invalidateExports } = registerImageHandlers(handle, {
   assets,
   jobs,
   resources,
+  onExportSaved: () => supporter.recordExport(),
 })
 handle('presets:list', () => presets.list())
 handle('presets:save', preset => presets.save(preset))
@@ -75,6 +78,25 @@ handle('app:info', () => ({
   version: app.getVersion(),
   platform: process.platform,
 }))
+handle('supporter:status', () => supporter.status())
+handle('supporter:activate', (key) => {
+  const status = supporter.activate(key)
+  const item = Menu.getApplicationMenu()?.getMenuItemById('license')
+  if (item)
+    item.visible = true
+  return status
+})
+handle('supporter:open', (destination: unknown) => {
+  const links = {
+    gumroad: 'https://antonreshetov.gumroad.com/l/poliframe?ref=poliframe-app',
+    paypal: 'https://www.paypal.com/paypalme/antongithub?ref=poliframe-app',
+    request:
+      'mailto:reshetov.art@gmail.com?subject=Poliframe%20supporter%20key%20request',
+  }
+  if (typeof destination !== 'string' || !Object.hasOwn(links, destination))
+    throw new Error('Invalid support destination')
+  return shell.openExternal(links[destination as keyof typeof links])
+})
 handle('updates:check', () => checkForUpdates(true))
 handle('updates:install', () => installUpdate())
 let notificationsReady = false
@@ -140,6 +162,10 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   store = await createStore()
+  supporter = new SupporterService({
+    get: () => store.app.get('supporter'),
+    set: value => store.app.set('supporter', value),
+  })
   app.setAboutPanelOptions({
     applicationName: 'Poliframe',
     applicationVersion: app.getVersion(),
@@ -160,6 +186,16 @@ app.whenReady().then(async () => {
         label: 'Poliframe',
         submenu: [
           { role: 'about' },
+          {
+            id: 'license',
+            label: 'License…',
+            visible: supporter.status().active,
+            click: () => {
+              mainWindow?.show()
+              mainWindow?.focus()
+              mainWindow?.webContents.send('supporter:show-license')
+            },
+          },
           {
             label: 'Check for Updates…',
             click: () => {
@@ -190,6 +226,23 @@ app.whenReady().then(async () => {
             label: 'Poliframe Website',
             click: () => {
               void shell.openExternal('https://antonreshetov.com/poliframe')
+            },
+          },
+          { type: 'separator' },
+          {
+            label: 'Donate via Gumroad (Visa, Mastercard, etc.)',
+            click: () => {
+              void shell.openExternal(
+                'https://antonreshetov.gumroad.com/l/poliframe?ref=poliframe-app',
+              )
+            },
+          },
+          {
+            label: 'Donate via PayPal',
+            click: () => {
+              void shell.openExternal(
+                'https://www.paypal.com/paypalme/antongithub?ref=poliframe-app',
+              )
             },
           },
         ],
