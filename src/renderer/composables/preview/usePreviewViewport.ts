@@ -1,11 +1,17 @@
 import type { Ref } from 'vue'
-import type {
-  LayoutResult,
-  PreviewResult,
-  Rect,
-} from '../../../shared/contracts'
-import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
+import type { LayoutResult, Rect } from '../../../shared/contracts'
+import type { DetailPreview } from './tile-cache'
+import {
+  computed,
+  onMounted,
+  onScopeDispose,
+  onUnmounted,
+  ref,
+  watch,
+  watchEffect,
+} from 'vue'
 import { useEditorContext } from '../useEditor'
+import { PreviewTileCache } from './tile-cache'
 
 interface ViewportDependencies {
   layout: Readonly<Ref<LayoutResult | undefined>>
@@ -34,6 +40,13 @@ export function usePreviewViewport({
   }
   let observer: ResizeObserver
   let regionGeneration = 0
+  let stateKey = ''
+  let currentKey = ''
+  let completed: { key: string, result: DetailPreview } | undefined
+  let pending:
+    { key: string, request: number, promise: Promise<void> } | undefined
+  let disposed = false
+  let requestSequence = 0
   let regionTimer: ReturnType<typeof setTimeout>
   onMounted(() => {
     window.addEventListener('resize', updateDpr)
@@ -54,6 +67,9 @@ export function usePreviewViewport({
     window.removeEventListener('resize', updateDpr)
     clearTimeout(regionTimer)
     regionGeneration++
+    disposed = true
+    completed = undefined
+    pending = undefined
   })
   const fitScale = computed(() =>
     !layout.value
@@ -126,14 +142,27 @@ export function usePreviewViewport({
   watchEffect(() => {
     const ratio = dpr.value
     const rendered = layout.value
-      ? Math.max(layout.value.width, layout.value.height) * scale.value
+      ? Math.max(layout.value.width, layout.value.height) * fitScale.value
       : Math.max(size.value.width, size.value.height)
     e.previewSize = Math.max(
       800,
       Math.min(3200, Math.ceil((rendered * ratio) / 256) * 256),
     )
   })
-  const regionPreview = ref<PreviewResult | null>(null)
+  const regionRendering = ref(false)
+  const regionPreview = ref<DetailPreview | null>(null)
+  const tileCache = new PreviewTileCache((key) => {
+    if (completed?.result.detailTiles?.some(tile => tile.key === key))
+      completed = undefined
+    if (regionPreview.value?.detailTiles?.some(tile => tile.key === key))
+      regionPreview.value = null
+  })
+  onScopeDispose(() => {
+    disposed = true
+    requestSequence++
+    clearTimeout(regionTimer)
+    tileCache.clear()
+  })
   const visibleRegion = computed<Rect | null>(() => {
     const output = layout.value
     if (!output || zoom() === null || scale.value <= 0)
@@ -163,6 +192,20 @@ export function usePreviewViewport({
       ? { x, y, width: right - x, height: bottom - y }
       : null
   })
+  const regionAllowed = computed(() => {
+    const backing = e.preview
+    const publishedAnnotations
+      = backing?.annotationLayers !== undefined
+        && e.interactivePreview === backing
+    return (
+      !resizing.value
+      && !e.spacingEditing
+      && (!e.interactivePreview || publishedAnnotations)
+      && !e.rendering
+      && !!backing
+      && backing.revision === e.renderRevision
+    )
+  })
   watch(
     [
       () => e.state,
@@ -170,59 +213,168 @@ export function usePreviewViewport({
       () => e.preview,
       () => e.rendering,
       resizing,
+      () => e.spacingEditing,
+      () => e.interactivePreview,
       visibleRegion,
       scale,
     ],
     () => {
-      const generation = ++regionGeneration
+      const nextStateKey = JSON.stringify([e.state, e.renderRevision])
+      if (nextStateKey !== stateKey) {
+        stateKey = nextStateKey
+        regionGeneration++
+        completed = undefined
+        pending = undefined
+        tileCache.clear()
+      }
+      const generation = regionGeneration
       clearTimeout(regionTimer)
-      regionPreview.value = null
+      regionPreview.value
+        = regionAllowed.value
+          && visibleRegion.value
+          && completed?.result.detailTiles
+          ? completed.result
+          : null
+      regionRendering.value = false
+      currentKey = ''
       const region = visibleRegion.value
       const backing = e.preview
-      if (
-        resizing.value
-        || e.spacingEditing
-        || e.interactivePreview
-        || !region
-        || !backing
-        || e.rendering
-        || backing.revision !== e.renderRevision
-      ) {
+      if (!regionAllowed.value || !region || !backing)
         return
-      }
       const revision = backing.revision
       const snapshot = JSON.parse(JSON.stringify(e.state))
       snapshot.revision = revision
+      // Reserve decoded CPU/GPU pixels and a conservative data-URL allowance.
+      const budgetEdge = Math.floor(
+        Math.max(region.width, region.height)
+        * Math.min(
+          1,
+          Math.sqrt((64 * 1024 * 1024) / 24 / (region.width * region.height)),
+        ),
+      )
       const maxSize = Math.round(
         Math.max(
-          400,
+          1,
           Math.min(
-            3200,
-            Math.max(region.width, region.height) * scale.value * dpr.value,
+            budgetEdge,
+            Math.max(
+              400,
+              Math.min(
+                3200,
+                Math.max(region.width, region.height) * scale.value * dpr.value,
+              ),
+            ),
           ),
         ),
       )
-      regionTimer = setTimeout(async () => {
-        try {
-          const result = await window.poliframe.preview(
-            snapshot,
-            maxSize,
-            region,
-          )
-          if (
-            generation === regionGeneration
-            && revision === e.renderRevision
-            && result.revision === revision
-            && e.preview?.revision === revision
-          ) {
-            regionPreview.value = result
-          }
+      const key = JSON.stringify([stateKey, region, maxSize])
+      currentKey = key
+      if (completed?.key === key) {
+        if (pending && pending.key !== key) {
+          requestSequence++
+          pending = undefined
         }
-        catch (error) {
-          if (generation === regionGeneration)
-            e.fail(error)
-        }
-      }, 180)
+        regionPreview.value = completed.result
+        return
+      }
+      regionRendering.value = true
+      if (pending?.key === key)
+        return
+      regionTimer = setTimeout(
+        () => {
+          const request = ++requestSequence
+          const promise = (async () => {
+            try {
+              const result = await window.poliframe.preview(
+                snapshot,
+                maxSize,
+                region,
+                undefined,
+                undefined,
+                tileCache.keys(),
+              )
+              if (
+                disposed
+                || generation !== regionGeneration
+                || request !== requestSequence
+                || result.revision !== revision
+              ) {
+                return
+              }
+              const current = () =>
+                !disposed
+                && generation === regionGeneration
+                && request === requestSequence
+              let detail: DetailPreview
+              if (result.detailTiles) {
+                const loaded = await tileCache.load(
+                  result.detailTiles,
+                  current,
+                )
+                if (!loaded || !current())
+                  return
+                detail = { ...result, detailTiles: loaded }
+              }
+              else {
+                detail = { ...result, detailTiles: undefined }
+                // The exact composited ROI and the tile cache share one allowance.
+                tileCache.clear()
+                completed = undefined
+                const factor = Math.min(
+                  1,
+                  maxSize / Math.max(region.width, region.height),
+                )
+                const pixels
+                  = Math.ceil(region.width * factor)
+                    * Math.ceil(region.height * factor)
+                if (result.dataUrl.length * 2 + pixels * 8 > 64 * 1024 * 1024)
+                  throw new Error('Preview region exceeds the memory budget')
+                const image
+                  = typeof window.Image === 'function'
+                    ? new window.Image()
+                    : undefined
+                if (image) {
+                  image.src = result.dataUrl
+                  await image.decode()
+                }
+                if (!current())
+                  return
+                const decodedPixels
+                  = image?.naturalWidth && image.naturalHeight
+                    ? image.naturalWidth * image.naturalHeight
+                    : pixels
+                if (
+                  result.dataUrl.length * 2 + decodedPixels * 8
+                  > 64 * 1024 * 1024
+                ) {
+                  throw new Error('Preview region exceeds the memory budget')
+                }
+              }
+              completed = { key, result: detail }
+              if (currentKey === key && regionAllowed.value)
+                regionPreview.value = detail
+            }
+            catch (error) {
+              if (
+                !disposed
+                && generation === regionGeneration
+                && currentKey === key
+                && request === requestSequence
+              ) {
+                e.fail(error)
+              }
+            }
+            finally {
+              if (pending?.request === request)
+                pending = undefined
+              if (currentKey === key && request === requestSequence)
+                regionRendering.value = false
+            }
+          })()
+          pending = { key, request, promise }
+        },
+        completed?.result.detailTiles ? 40 : 180,
+      )
     },
     { deep: true, flush: 'sync' },
   )
@@ -259,6 +411,8 @@ export function usePreviewViewport({
     pan,
     scale,
     regionPreview,
+    regionAllowed,
+    regionRendering,
     wheel,
     panStart,
     clearSelection,

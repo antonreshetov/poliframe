@@ -110,9 +110,29 @@ export function registerImageHandlers(
       maxSize: unknown,
       region?: unknown,
       annotationsOnly?: unknown,
+      knownGestureImagesKey?: unknown,
+      knownDetailKeys?: unknown,
     ) => {
       if (annotationsOnly !== undefined && typeof annotationsOnly !== 'boolean')
         throw new Error('Invalid annotation preview mode')
+      if (
+        knownGestureImagesKey !== undefined
+        && (typeof knownGestureImagesKey !== 'string'
+          || !/^[a-f0-9]{64}$/.test(knownGestureImagesKey))
+      ) {
+        throw new Error('Invalid gesture images key')
+      }
+      if (
+        knownDetailKeys !== undefined
+        && (!Array.isArray(knownDetailKeys)
+          || knownDetailKeys.length > 512
+          || knownDetailKeys.some(
+            key =>
+              typeof key !== 'string' || key.length < 1 || key.length > 512,
+          ))
+      ) {
+        throw new Error('Invalid detail tile keys')
+      }
       validateComposition(snapshot)
       if (
         region !== undefined
@@ -141,6 +161,8 @@ export function registerImageHandlers(
         region,
         maxSize: Math.round(Math.max(400, Math.min(3200, maxSize))),
         annotationsOnly: annotationsOnly === true && !region,
+        knownGestureImagesKey: region ? undefined : knownGestureImagesKey,
+        knownDetailKeys: region ? knownDetailKeys : undefined,
       })
     },
   )

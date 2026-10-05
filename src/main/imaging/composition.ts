@@ -8,12 +8,13 @@ import type {
   Rect,
   Transform,
 } from '../../shared/contracts'
+import { createHash } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import sharp from 'sharp'
 import { calculateLayout, effectiveSize } from '../../shared/layout'
 import { createCaptionRenderer } from './captions'
-import { toWorkingImage, toWorkingPipeline } from './color'
-import { openImage, validateDimensions } from './index'
+import { outputProfile, toWorkingImage, toWorkingPipeline } from './color'
+import { MAX_IMAGE_PIXELS, openImage, validateDimensions } from './index'
 import { PreviewCache } from './preview-cache'
 
 const previewSources = new PreviewCache(96 * 1024 * 1024)
@@ -30,6 +31,7 @@ export async function transformImage(
   height: number,
   region?: Rect,
   previewSource?: Buffer,
+  compression: 'lzw' | 'none' = 'lzw',
 ): Promise<Buffer> {
   effectiveSize(asset, transform)
   validateDimensions(region?.width ?? width, region?.height ?? height)
@@ -37,26 +39,20 @@ export async function transformImage(
     ? openImage(previewSource)
     : await toWorkingPipeline(asset.path)
   let source = (await sharp(previewSource ?? asset.path).metadata()).autoOrient
-  if (transform.rotation % 360) {
-    const normalized = await pipeline.toBuffer()
-    const data = await openImage(normalized)
+  if (transform.rotation % 360 || transform.flipX || transform.flipY) {
+    // Sharp applies flips before rotation. Swap their axes for quarter turns
+    // to preserve the editor's rotate-then-flip transform in one materialization.
+    const swap = transform.rotation % 180 !== 0
+    const data = await pipeline
       .rotate(transform.rotation)
+      .flop(swap ? transform.flipY : transform.flipX)
+      .flip(swap ? transform.flipX : transform.flipY)
       .toColourspace('rgb16')
       .withIccProfile('p3')
-      .tiff({ compression: 'lzw' })
+      .tiff({ compression: 'none' })
       .toBuffer()
     pipeline = openImage(data)
     source = (await sharp(data).metadata()).autoOrient
-  }
-  if (transform.flipX || transform.flipY) {
-    const data = await pipeline
-      .flop(transform.flipX)
-      .flip(transform.flipY)
-      .toColourspace('rgb16')
-      .withIccProfile('p3')
-      .tiff({ compression: 'lzw' })
-      .toBuffer()
-    pipeline = openImage(data)
   }
   const crop = transform.crop
   const left = Math.min(source.width - 1, Math.round(crop.x * source.width))
@@ -86,8 +82,88 @@ export async function transformImage(
   return output
     .toColourspace('rgb16')
     .withIccProfile('p3')
-    .tiff({ compression: 'lzw' })
+    .tiff({ compression })
     .toBuffer()
+}
+
+/** Required source long edge for cover after rotation/crop, with rounding headroom. */
+export function previewSourceSize(
+  asset: Pick<Photo, 'width' | 'height'>,
+  transform: Transform,
+  width: number,
+  height: number,
+): number {
+  const effective = effectiveSize(asset, transform)
+  return Math.ceil(
+    Math.max(asset.width, asset.height)
+    * Math.max((width + 2) / effective.width, (height + 2) / effective.height),
+  )
+}
+
+async function previewSource(
+  asset: ImageAsset,
+  sourceSize: number,
+  fast = false,
+) {
+  const info = await stat(asset.path)
+  const identity = JSON.stringify([
+    asset.path,
+    info.size,
+    info.mtimeMs,
+    info.ctimeMs,
+  ])
+  const bucket = [1024, 2200, 4096].find(size => size >= sourceSize) ?? 0
+  return {
+    identity,
+    bucket,
+    load: () =>
+      bucket
+        ? previewSources.get(`${identity}:${bucket}:${fast}`, async () => {
+            let input: string | Buffer = asset.path
+            if (fast) {
+              const options = {
+                limitInputPixels: MAX_IMAGE_PIXELS,
+                failOn: 'error' as const,
+                pages: 1,
+              }
+              const metadata = await sharp(asset.path, options).metadata()
+              if (
+                metadata.hasProfile
+                && metadata.depth === 'uchar'
+                && ['srgb', 'rgb'].includes(metadata.space)
+              ) {
+                const oriented = metadata.autoOrient
+                const factor = Math.min(
+                  1,
+                  bucket / Math.max(oriented.width, oriented.height),
+                )
+                input = await sharp(asset.path, options)
+                  .autoOrient()
+                  .keepIccProfile()
+                  .resize(
+                    Math.max(1, Math.round(oriented.width * factor)),
+                    Math.max(1, Math.round(oriented.height * factor)),
+                    {
+                      fit: 'fill',
+                      fastShrinkOnLoad: false,
+                    },
+                  )
+                  .tiff({ compression: 'none' })
+                  .toBuffer()
+              }
+            }
+            return (await toWorkingPipeline(input))
+              .resize({
+                width: bucket,
+                height: bucket,
+                fit: 'inside',
+                withoutEnlargement: true,
+              })
+              .tiff({ compression: 'none' })
+              .toBuffer()
+          })
+        : undefined,
+  }
 }
 
 async function previewTile(
@@ -98,14 +174,7 @@ async function previewTile(
   region: Rect,
   sourceSize: number,
 ): Promise<Buffer> {
-  const info = await stat(asset.path)
-  const identity = JSON.stringify([
-    asset.path,
-    info.size,
-    info.mtimeMs,
-    info.ctimeMs,
-  ])
-  const bucket = sourceSize > 4096 ? 0 : sourceSize <= 2200 ? 2200 : 4096
+  const { identity, bucket, load } = await previewSource(asset, sourceSize)
   const key = JSON.stringify([
     identity,
     transform,
@@ -114,31 +183,11 @@ async function previewTile(
     region,
     bucket,
   ])
-  return previewTiles.get(key, async () => {
-    let source: Buffer | undefined
-    if (bucket) {
-      source = await previewSources.get(`${identity}:${bucket}`, async () =>
-        (await toWorkingPipeline(asset.path))
-          .resize({
-            width: bucket,
-            height: bucket,
-            fit: 'inside',
-            withoutEnlargement: true,
-          })
-          .tiff({ compression: 'none' })
-          .toBuffer())
-    }
-    return transformImage(asset, transform, width, height, region, source)
-  })
+  return previewTiles.get(key, async () =>
+    transformImage(asset, transform, width, height, region, await load()))
 }
 
-const gestureCache = new PreviewCache(24 * 1024 * 1024)
-/** Native gridLeafGestureImages equivalent: transformed photo, before cell cover-crop. */
-export async function gestureImages(
-  snapshot: Composition,
-  assets: ImageAsset[],
-): Promise<NonNullable<PreviewResult['gestureImages']>> {
-  const result: NonNullable<PreviewResult['gestureImages']> = []
+function visiblePanels(snapshot: Composition) {
   const visible = new Set<string>()
   const visit = (node: Composition['grid']) => {
     if (node.type === 'leaf') {
@@ -152,19 +201,149 @@ export async function gestureImages(
   if (snapshot.layout === 'grid')
     visit(snapshot.grid)
   else snapshot.panels.forEach(panel => visible.add(panel.photoId))
-  for (const panel of snapshot.panels) {
-    if (!visible.has(panel.photoId))
-      continue
+  return snapshot.panels.filter(panel => visible.has(panel.photoId))
+}
+
+interface GesturePreviewContext {
+  layout: LayoutResult
+  maxSize: number
+  resources?: string
+}
+
+function gestureSize(
+  asset: ImageAsset,
+  transform: Transform,
+  context?: GesturePreviewContext,
+  hasAlpha = false,
+) {
+  const effective = effectiveSize(asset, transform)
+  const longest = Math.max(effective.width, effective.height)
+  let edge = 2200
+  if (context) {
+    const { layout, maxSize } = context
+    const factor = Math.min(1, maxSize / Math.max(layout.width, layout.height))
+    const required = layout.cells.reduce(
+      (largest, cell) =>
+        cell.photoId === asset.id
+          ? Math.max(
+              largest,
+              longest
+              * factor
+              * Math.max(
+                cell.width / effective.width,
+                cell.height / effective.height,
+              ),
+            )
+          : largest,
+      0,
+    )
+    edge = [512, 1024, 2200].find(size => size >= required) ?? 2200
+  }
+  // 80 MiB of the 96 MiB scene allowance: decoded CPU/GPU pixels plus
+  // encoded strings, conservatively counting repeated mounted photo cells.
+  if (context) {
+    const cells = Math.max(
+      1,
+      context.layout.cells.filter(cell => cell.photoId).length,
+    )
+    const pixelBudget = (80 * 1024 * 1024) / (hasAlpha ? 24 : 16) / cells
+    const budgetEdge = Math.floor(
+      longest * Math.sqrt(pixelBudget / (effective.width * effective.height)),
+    )
+    edge = Math.min(edge, Math.max(1, budgetEdge))
+  }
+  const factor = Math.min(1, edge / longest)
+  return {
+    width: Math.max(1, Math.round(effective.width * factor)),
+    height: Math.max(1, Math.round(effective.height * factor)),
+    edge,
+  }
+}
+
+/** Stateless content identity: a worker restart never invalidates an acknowledged payload. */
+export async function gesturePreview(
+  snapshot: Composition,
+  assets: ImageAsset[],
+  knownGestureImagesKey?: string,
+  context?: GesturePreviewContext,
+): Promise<Pick<PreviewResult, 'gestureImages' | 'gestureImagesKey'>> {
+  const identities = await Promise.all(
+    visiblePanels(snapshot).map(async (panel) => {
+      const asset = assets.find(item => item.id === panel.photoId)
+      if (!asset)
+        throw new Error(`Grid image is unavailable: ${panel.photoId}`)
+      const info = await stat(asset.path)
+      const hasAlpha = context
+        ? (await sharp(asset.path).metadata()).hasAlpha
+        : false
+      const { width, height } = gestureSize(
+        asset,
+        panel.transform,
+        context,
+        hasAlpha,
+      )
+      const { rotation, flipX, flipY, crop } = panel.transform
+      return [
+        panel.photoId,
+        asset.path,
+        asset.width,
+        asset.height,
+        info.size,
+        info.mtimeMs,
+        info.ctimeMs,
+        rotation,
+        flipX,
+        flipY,
+        crop.x,
+        crop.y,
+        crop.width,
+        crop.height,
+        width,
+        height,
+        hasAlpha ? snapshot.mat : undefined,
+      ]
+    }),
+  )
+  const gestureImagesKey = createHash('sha256')
+    .update(
+      JSON.stringify([
+        'alpha-mat-v2',
+        !!context,
+        snapshot.output.profile,
+        identities,
+      ]),
+    )
+    .digest('hex')
+  return {
+    gestureImagesKey,
+    gestureImages:
+      gestureImagesKey === knownGestureImagesKey
+        ? undefined
+        : await gestureImages(snapshot, assets, context),
+  }
+}
+
+const gestureCache = new PreviewCache(24 * 1024 * 1024)
+/** Native gridLeafGestureImages equivalent: transformed photo, before cell cover-crop. */
+export async function gestureImages(
+  snapshot: Composition,
+  assets: ImageAsset[],
+  context?: GesturePreviewContext,
+): Promise<NonNullable<PreviewResult['gestureImages']>> {
+  const result: NonNullable<PreviewResult['gestureImages']> = []
+  for (const panel of visiblePanels(snapshot)) {
     const asset = assets.find(item => item.id === panel.photoId)
     if (!asset)
       continue
-    const effective = effectiveSize(asset, panel.transform)
-    const factor = Math.min(
-      1,
-      2200 / Math.max(effective.width, effective.height),
+    const hasAlpha = context
+      ? (await sharp(asset.path).metadata()).hasAlpha
+      : false
+    const { width, height, edge } = gestureSize(
+      asset,
+      panel.transform,
+      context,
+      hasAlpha,
     )
-    const width = Math.max(1, Math.round(effective.width * factor))
-    const height = Math.max(1, Math.round(effective.height * factor))
     const info = await stat(asset.path)
     const key = JSON.stringify([
       asset.path,
@@ -172,28 +351,66 @@ export async function gestureImages(
       info.mtimeMs,
       info.ctimeMs,
       panel.transform,
+      snapshot.output.profile,
+      'alpha-mat-v2',
+      !!context,
+      hasAlpha ? snapshot.mat : undefined,
+      width,
+      height,
     ])
     const data = await gestureCache.get(key, async () => {
-      const tile = await previewTile(
+      const source = await previewSource(
+        asset,
+        edge
+        / Math.min(panel.transform.crop.width, panel.transform.crop.height),
+        !!context,
+      )
+      // This intermediate is consumed immediately; keep compressed tiles out of
+      // this path without retaining large uncompressed buffers in previewTiles.
+      const tile = await transformImage(
         asset,
         panel.transform,
         width,
         height,
         { x: 0, y: 0, width, height },
-        2200
-        / Math.min(panel.transform.crop.width, panel.transform.crop.height),
+        await source.load(),
+        'none',
       )
-      return openImage(tile)
-        .withIccProfile('srgb')
+      let pipeline = openImage(tile)
+      if (hasAlpha) {
+        // Match the exact compositor's P3 blend before the display transform.
+        const matte = await toWorkingImage(
+          await sharp({
+            create: {
+              width: 1,
+              height: 1,
+              channels: 3,
+              background: snapshot.mat,
+            },
+          })
+            .png()
+            .toBuffer(),
+        )
+        pipeline = openImage(matte)
+          .resize(width, height, { fit: 'fill' })
+          .pipelineColourspace('rgb16')
+          .composite([{ input: tile, left: 0, top: 0 }])
+      }
+      const output = pipeline
+        .withIccProfile(
+          outputProfile(snapshot.output.profile, context?.resources ?? ''),
+        )
         .toColourspace('srgb')
-        .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
-        .toBuffer()
+      return (await sharp(tile).metadata()).hasAlpha
+        ? output.png().toBuffer()
+        : output.jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toBuffer()
     })
+    const format = data[0] === 0x89 ? 'png' : 'jpeg'
     result.push({
       photoId: panel.photoId,
       width,
       height,
-      dataUrl: `data:image/jpeg;base64,${data.toString('base64')}`,
+      dataUrl: `data:image/${format};base64,${data.toString('base64')}`,
     })
   }
   return result
@@ -347,13 +564,9 @@ export async function compose(
       )
     let input: Buffer
     if (maxSize !== undefined) {
-      const crop = panel.transform.crop
       const sourceSize = region
         ? Infinity
-        : Math.max(
-            2200,
-            Math.ceil(maxSize / Math.min(crop.width, crop.height)),
-          )
+        : previewSourceSize(asset, panel.transform, cellWidth, cellHeight)
       input = await previewTile(
         asset,
         panel.transform,
@@ -396,14 +609,13 @@ export async function compose(
       cap.scale,
     )
     for (const piece of text.pieces) {
-      const info = await sharp(piece.input).metadata()
       const input
         = factor === 1
           ? piece.input
           : await sharp(piece.input)
               .resize(
-                Math.max(1, Math.round(info.width * factor)),
-                Math.max(1, Math.round(info.height * factor)),
+                Math.max(1, Math.round(piece.width * factor)),
+                Math.max(1, Math.round(piece.height * factor)),
                 { fit: 'fill' },
               )
               .toColourspace('rgb16')
@@ -445,10 +657,15 @@ export async function compose(
     const logoHeight = Math.max(1, Math.round(logoH * factor))
     validateDimensions(logoWidth, logoHeight)
     const opacity = Math.max(0, Math.min(1, wm.opacity / 100))
-    const input = await openImage(await toWorkingImage(logo.path))
-      .resize(logoWidth, logoHeight, { fit: 'fill' })
-      .ensureAlpha()
-      .linear([1, 1, 1, opacity], [0, 0, 0, 0])
+    const working = await toWorkingImage(logo.path)
+    const logoPipeline = openImage(working).resize(logoWidth, logoHeight, {
+      fit: 'fill',
+    })
+    // Sharp runs linear before ensureAlpha, regardless of the chain order.
+    if ((await sharp(working).metadata()).hasAlpha)
+      logoPipeline.linear([1, 1, 1, opacity], [0, 0, 0, 0])
+    else logoPipeline.ensureAlpha(opacity)
+    const input = await logoPipeline
       .toColourspace('rgb16')
       .withIccProfile('p3')
       .tiff({ compression: 'lzw' })

@@ -1,10 +1,10 @@
 import type { Composition, Rect } from '../../shared/contracts'
 import type { Asset } from '../services/assets'
-import path from 'node:path'
-import process from 'node:process'
 import { parentPort } from 'node:worker_threads'
 import { annotationPreview } from './annotations'
-import { compose, gestureImages } from './composition'
+import { outputProfile } from './color'
+import { compose, gesturePreview } from './composition'
+import { detailPreview } from './detail-preview'
 import { exportImage } from './index'
 
 parentPort!.on(
@@ -18,6 +18,8 @@ parentPort!.on(
     region?: Rect
     maxSize?: number
     annotationsOnly?: boolean
+    knownGestureImagesKey?: string
+    knownDetailKeys?: string[]
     destination?: string
   }) => {
     try {
@@ -27,9 +29,24 @@ parentPort!.on(
           job.assets,
           job.resources,
           job.maxSize ?? 2200,
+          job.knownGestureImagesKey,
         )
         parentPort!.postMessage({ id: job.id, result })
         return
+      }
+      if (job.type === 'preview' && job.region) {
+        const result = await detailPreview(
+          job.snapshot,
+          job.assets,
+          job.resources,
+          job.region,
+          job.maxSize ?? 2200,
+          job.knownDetailKeys,
+        )
+        if (result) {
+          parentPort!.postMessage({ id: job.id, result })
+          return
+        }
       }
       const { pipeline, layout } = await compose(
         job.snapshot,
@@ -38,14 +55,13 @@ parentPort!.on(
         job.type === 'preview' ? job.maxSize : undefined,
         job.type === 'preview' ? job.region : undefined,
       )
+      const profilePath = outputProfile(
+        job.snapshot.output.profile,
+        job.resources,
+      )
       const profile
         = job.snapshot.output.profile === 'adobe'
-          ? {
-              path:
-                process.platform === 'darwin'
-                  ? '/System/Library/ColorSync/Profiles/AdobeRGB1998.icc'
-                  : path.join(job.resources, 'profiles/AdobeRGB1998.icc'),
-            }
+          ? { path: profilePath }
           : job.snapshot.output.profile
       if (job.type === 'preview') {
         const data = await pipeline
@@ -58,9 +74,18 @@ parentPort!.on(
           result: {
             revision: job.snapshot.revision,
             region: job.region,
-            gestureImages: job.region
-              ? undefined
-              : await gestureImages(job.snapshot, job.assets),
+            ...(job.region
+              ? {}
+              : await gesturePreview(
+                  job.snapshot,
+                  job.assets,
+                  job.knownGestureImagesKey,
+                  {
+                    layout,
+                    maxSize: job.maxSize ?? 2200,
+                    resources: job.resources,
+                  },
+                )),
             dataUrl: `data:image/jpeg;base64,${data.toString('base64')}`,
             layout,
           },

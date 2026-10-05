@@ -75,6 +75,8 @@ function escape(text: string) {
   )
 }
 interface TextPiece {
+  width: number
+  height: number
   input: Buffer
   x: number
   y: number
@@ -101,6 +103,16 @@ function inks(mat: string): Record<Role | 'rule', string> {
     rule: colors[4]!,
   }
 }
+
+interface RenderedLine {
+  input: Buffer
+  width: number
+  height: number
+  size: number
+}
+const lineCache = new Map<string, RenderedLine>()
+let lineCacheBytes = 0
+const lineCacheBudget = 8 * 1024 * 1024
 
 const captionCache = new Map<string, CaptionImage>()
 let captionCacheBytes = 0
@@ -169,26 +181,55 @@ export function createCaptionRenderer(
           = styles[s.caption.style][role]
         const font = `${captionFonts[face]} ${Math.max(1, pointSize * scale)}`
         const content = escape(upper ? text[role].toUpperCase() : text[role])
+        const size = pointSize * scale
+        const textOptions = {
+          text: `<span foreground="${colors[role]}" letter_spacing="${Math.round(tracking * pointSize * scale * 1024)}">${content}</span>`,
+          font,
+          fontfile: join(resources, 'fonts', `${face}.ttf`),
+          width: Math.max(1, Math.floor(available)),
+          rgba: true,
+          align,
+          dpi: 72,
+        }
+        const lineKey = JSON.stringify([preview, textOptions, size])
+        const cachedLine = lineCache.get(lineKey)
+        if (cachedLine) {
+          lineCache.delete(lineKey)
+          lineCache.set(lineKey, cachedLine)
+          return cachedLine
+        }
         const { data, info } = await sharp({
-          text: {
-            text: `<span foreground="${colors[role]}" letter_spacing="${Math.round(tracking * pointSize * scale * 1024)}">${content}</span>`,
-            font,
-            fontfile: join(resources, 'fonts', `${face}.ttf`),
-            width: Math.max(1, Math.floor(available)),
-            rgba: true,
-            align,
-            dpi: 72,
-          },
+          text: textOptions,
           limitInputPixels: MAX_IMAGE_PIXELS,
         })
-          .png()
+          .png({ compressionLevel: preview ? 1 : 6 })
           .toBuffer({ resolveWithObject: true })
-        return {
+        const result = {
           input: preview ? data : await toWorkingImage(data),
           width: info.width,
           height: info.height,
-          size: pointSize * scale,
+          size,
         }
+        const bytes = result.input.byteLength
+        if (bytes <= lineCacheBudget) {
+          const previous = lineCache.get(lineKey)
+          if (previous) {
+            lineCacheBytes -= previous.input.byteLength
+            lineCache.delete(lineKey)
+          }
+          while (
+            (lineCacheBytes + bytes > lineCacheBudget
+              || lineCache.size >= 128)
+            && lineCache.size
+          ) {
+            const oldest = lineCache.keys().next().value!
+            lineCacheBytes -= lineCache.get(oldest)!.input.byteLength
+            lineCache.delete(oldest)
+          }
+          lineCache.set(lineKey, result)
+          lineCacheBytes += bytes
+        }
+        return result
       }
       const inline = ['studio', 'retro', 'editorial'].includes(s.caption.style)
       if (inline) {
@@ -221,6 +262,8 @@ export function createCaptionRenderer(
             const y = out.height + baseline - item.size
             out.pieces.push({
               input: item.input,
+              width: item.width,
+              height: item.height,
               x: i === 0 ? 0 : Math.max(0, width - item.width),
               y,
             })
@@ -259,6 +302,8 @@ export function createCaptionRenderer(
               .toBuffer()
             out.pieces.push({
               input: await toWorkingImage(rule),
+              width: ruleWidth,
+              height: ruleHeight,
               x: Math.max(0, (width - ruleWidth) / 2),
               y: out.height,
             })
@@ -271,6 +316,8 @@ export function createCaptionRenderer(
             out.height += margins[i]! * scale
           out.pieces.push({
             input: item.input,
+            width: item.width,
+            height: item.height,
             x: Math.max(0, (width - item.width) / 2),
             y: out.height,
           })

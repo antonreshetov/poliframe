@@ -11,7 +11,9 @@ it('preview LRU reuses completed buffers and evicts within its byte budget', asy
     reads++
     return Promise.resolve(Buffer.alloc(4))
   }
+  assert.equal(cache.peek('missing'), undefined)
   await cache.get('a', read)
+  assert.equal(cache.peek('a')?.byteLength, 4)
   await cache.get('b', read)
   await cache.get('a', read)
   await cache.get('c', read)
