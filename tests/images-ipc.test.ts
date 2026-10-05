@@ -14,7 +14,9 @@ function deferred() {
 async function setup() {
   const handlers = new Map()
   const calls = []
-  let window
+  let window = {
+    webContents: { send: (...args) => calls.push(['event', ...args]) },
+  }
   const photo = { id: 'photo', name: 'Original.jpg', path: '/original.jpg' }
   const assets = {
     all: ids => ids.map(() => photo),
@@ -40,8 +42,12 @@ async function setup() {
     },
   }
   vi.resetModules()
-  vi.doMock('electron', () => ({ dialog }))
+  vi.doMock('electron', () => ({
+    dialog,
+    shell: { showItemInFolder: file => calls.push(['reveal', file]) },
+  }))
   vi.doMock('node:fs/promises', () => ({
+    access: async () => {},
     realpath: async file => file,
     mkdir: async () => calls.push(['mkdir']),
     rename: async () => calls.push(['rename']),
@@ -176,4 +182,31 @@ it('validates bounded detail acknowledgments and forwards them only for regions'
   assert.deepEqual(calls.at(-1)[1].knownDetailKeys, ['tile-key'])
   await preview(snapshot, 1200, undefined, false, undefined, ['tile-key'])
   assert.equal(calls.at(-1)[1].knownDetailKeys, undefined)
+})
+
+it('announces export only after the save dialog is confirmed', async () => {
+  const { handlers, calls, dialog, snapshot } = await setup()
+  const pending = deferred()
+  dialog.showSaveDialog = () => pending.promise
+  const exporting = handlers.get('images:export')(snapshot)
+  await flush()
+  assert.equal(
+    calls.some(([kind]) => kind === 'event'),
+    false,
+  )
+  pending.complete({ filePath: '/result.jpg' })
+  await exporting
+  const start = calls.findIndex(([kind]) => kind === 'event')
+  assert.deepEqual(calls[start], ['event', 'images:export-started'])
+  assert.ok(start < calls.findIndex(([kind]) => kind === 'export'))
+})
+
+it('reveals an absolute exported file path through the system file manager', async () => {
+  const { handlers, calls } = await setup()
+  await handlers.get('images:reveal')('/result.jpg')
+  assert.deepEqual(calls.at(-1), ['reveal', '/result.jpg'])
+  await assert.rejects(
+    handlers.get('images:reveal')('relative.jpg'),
+    /Invalid file path/,
+  )
 })

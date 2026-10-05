@@ -22,7 +22,17 @@ const api: AppApi = {
       knownGestureImagesKey,
       knownDetailKeys,
     ),
-  exportImage: snapshot => ipcRenderer.invoke('images:export', snapshot),
+  exportImage: async (snapshot, onStarted) => {
+    const started = () => onStarted?.()
+    ipcRenderer.on('images:export-started', started)
+    try {
+      return await ipcRenderer.invoke('images:export', snapshot)
+    }
+    finally {
+      ipcRenderer.removeListener('images:export-started', started)
+    }
+  },
+  revealFile: path => ipcRenderer.invoke('images:reveal', path),
   cancelExport: () => ipcRenderer.invoke('images:cancel'),
   presets: {
     list: () => ipcRenderer.invoke('presets:list'),

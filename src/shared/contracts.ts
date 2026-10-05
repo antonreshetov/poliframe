@@ -173,7 +173,9 @@ export interface AppApi {
   ) => Promise<PreviewResult>
   exportImage: (
     snapshot: Composition,
+    onStarted?: () => void,
   ) => Promise<{ status: 'saved' | 'cancelled', path?: string }>
+  revealFile: (path: string) => Promise<void>
   cancelExport: () => Promise<void>
   presets: {
     list: () => Promise<Preset[]>

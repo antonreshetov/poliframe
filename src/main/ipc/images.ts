@@ -3,9 +3,9 @@ import type { Composition, PreviewResult } from '../../shared/contracts'
 import type { AssetRegistry } from '../services/assets'
 import type { RenderJobs } from '../services/render-jobs'
 import { randomUUID } from 'node:crypto'
-import { mkdir, realpath, rename, rm } from 'node:fs/promises'
+import { access, mkdir, realpath, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
-import { dialog } from 'electron'
+import { dialog, shell } from 'electron'
 import { validateComposition } from '../services/validation'
 
 interface ImageHandlerDependencies {
@@ -166,6 +166,12 @@ export function registerImageHandlers(
       })
     },
   )
+  handle('images:reveal', async (file: unknown) => {
+    if (typeof file !== 'string' || !path.isAbsolute(file))
+      throw new Error('Invalid file path')
+    await access(file)
+    shell.showItemInFolder(file)
+  })
   handle('images:cancel', async () => {
     invalidateExports()
     await jobs.cancelExport()
@@ -193,7 +199,8 @@ export function registerImageHandlers(
         .map(a => path.parse(a.name).name)
         .join('-')
         .slice(0, 180)
-      const result = await dialog.showSaveDialog(getWindow(), {
+      const owner = getWindow()
+      const result = await dialog.showSaveDialog(owner, {
         defaultPath: `${names || 'Poliframe'}.${ext}`,
         filters: [
           { name: snapshot.output.format.toUpperCase(), extensions: [ext] },
@@ -228,6 +235,7 @@ export function registerImageHandlers(
       )
       await mkdir(tempDirectory)
       const temporary = path.join(tempDirectory, `output.${ext}`)
+      owner.webContents.send('images:export-started')
       await jobs.request('export', {
         snapshot,
         assets: sourceAssets,

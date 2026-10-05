@@ -23,6 +23,7 @@ export function useEditor() {
   const state = ref(defaults())
   const photos = reactive<Record<string, Photo>>({})
   const busy = ref(false)
+  const exporting = ref(false)
   const importing = ref(false)
   const cropId = ref<string | null>(null)
   const {
@@ -236,9 +237,26 @@ export function useEditor() {
       return
     busy.value = true
     try {
-      const result = await window.poliframe.exportImage(clone(state.value))
-      if (result.status === 'saved')
-        toast.success('Image exported', { description: result.path })
+      const result = await window.poliframe.exportImage(
+        clone(state.value),
+        () => {
+          exporting.value = true
+        },
+      )
+      if (result.status === 'saved') {
+        const path = result.path
+        toast.success('Image exported', {
+          description: path,
+          action: path
+            ? {
+                label: 'Show',
+                onClick: () => {
+                  void window.poliframe.revealFile(path).catch(fail)
+                },
+              }
+            : undefined,
+        })
+      }
     }
     catch (e) {
       const message = e instanceof Error ? e.message : String(e)
@@ -252,6 +270,7 @@ export function useEditor() {
       }
     }
     finally {
+      exporting.value = false
       busy.value = false
     }
   }
@@ -304,6 +323,7 @@ export function useEditor() {
     previewSize,
     renderRevision,
     busy,
+    exporting,
     importing,
     rendering,
     selected,

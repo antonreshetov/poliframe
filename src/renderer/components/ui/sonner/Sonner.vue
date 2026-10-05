@@ -61,3 +61,18 @@ const delegatedProps = reactiveOmit(props, 'class', 'toastOptions')
     </template>
   </Sonner>
 </template>
+
+<style>
+.toaster [data-sonner-toast][data-styled='true'] [data-button],
+.toaster [data-sonner-toast][data-styled='true'] [data-close-button] {
+  cursor: default;
+}
+
+.toaster [data-sonner-toast][data-styled='true'] [data-button] {
+  transition: background-color 150ms, box-shadow 200ms;
+}
+
+.toaster [data-sonner-toast][data-styled='true'] [data-button]:not([data-cancel]):not(:disabled):hover {
+  background: color-mix(in srgb, var(--normal-text) 80%, var(--normal-bg));
+}
+</style>
