@@ -1,9 +1,6 @@
 import type { Ref } from 'vue'
-import type {
-  LayoutResult,
-  PreviewResult,
-  Rect,
-} from '../../../shared/contracts'
+import type { LayoutResult, Rect } from '../../../shared/contracts'
+import type { DetailPreview } from './tile-cache'
 import {
   computed,
   onMounted,
@@ -45,7 +42,7 @@ export function usePreviewViewport({
   let regionGeneration = 0
   let stateKey = ''
   let currentKey = ''
-  let completed: { key: string, result: PreviewResult } | undefined
+  let completed: { key: string, result: DetailPreview } | undefined
   let pending:
     { key: string, request: number, promise: Promise<void> } | undefined
   let disposed = false
@@ -153,7 +150,7 @@ export function usePreviewViewport({
     )
   })
   const regionRendering = ref(false)
-  const regionPreview = ref<PreviewResult | null>(null)
+  const regionPreview = ref<DetailPreview | null>(null)
   const tileCache = new PreviewTileCache((key) => {
     if (completed?.result.detailTiles?.some(tile => tile.key === key))
       completed = undefined
@@ -308,6 +305,7 @@ export function usePreviewViewport({
                 !disposed
                 && generation === regionGeneration
                 && request === requestSequence
+              let detail: DetailPreview
               if (result.detailTiles) {
                 const loaded = await tileCache.load(
                   result.detailTiles,
@@ -315,9 +313,10 @@ export function usePreviewViewport({
                 )
                 if (!loaded || !current())
                   return
-                result.detailTiles = loaded
+                detail = { ...result, detailTiles: loaded }
               }
               else {
+                detail = { ...result, detailTiles: undefined }
                 // The exact composited ROI and the tile cache share one allowance.
                 tileCache.clear()
                 completed = undefined
@@ -351,9 +350,9 @@ export function usePreviewViewport({
                   throw new Error('Preview region exceeds the memory budget')
                 }
               }
-              completed = { key, result }
+              completed = { key, result: detail }
               if (currentKey === key && regionAllowed.value)
-                regionPreview.value = result
+                regionPreview.value = detail
             }
             catch (error) {
               if (

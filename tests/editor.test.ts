@@ -1287,10 +1287,6 @@ it('local geometry refuses oversized mounted thumbnail copies until the bounded 
 
 it('detail tiles stay visible during pan, decode as a bounded set, and disappear on edits', async (t) => {
   t.onTestFinished(() => vi.restoreAllMocks())
-  vi.spyOn(URL, 'createObjectURL').mockImplementation(
-    () => `blob:${Math.random()}`,
-  )
-  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
   const output = {
     width: 2000,
     height: 1000,
@@ -1315,6 +1311,10 @@ it('detail tiles stay visible during pan, decode as a bounded set, and disappear
   context.editor = editor
   const pending = []
   const decoded = []
+  vi.stubGlobal('createImageBitmap', async (blob) => {
+    decoded.push(blob)
+    return { width: 512, height: 512, close() {} }
+  })
   vi.stubGlobal('window', {
     devicePixelRatio: 1,
     Image: class {
@@ -1356,6 +1356,7 @@ it('detail tiles stay visible during pan, decode as a bounded set, and disappear
     y: 0,
     width: 512,
     height: 512,
+    cellId: 'cell',
     pixelWidth: 512,
     pixelHeight: 512,
   }
@@ -1370,7 +1371,7 @@ it('detail tiles stay visible during pan, decode as a bounded set, and disappear
   })
   await new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(decoded.length, 1)
-  assert.match(decoded[0], /^blob:/)
+  assert.equal(decoded[0].type, 'image/jpeg')
   controls.pan.value = { x: 60, y: 0 }
   assert.equal(
     controls.regionPreview.value.detailTiles[0].key,

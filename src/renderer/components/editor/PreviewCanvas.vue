@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { GridNode, PreviewResult, Rect } from '../../../shared/contracts'
+import type { DecodedTile } from '../../composables/preview/tile-cache'
 import { Crop, Image, ImagePlus, Merge, Plus, Trash2, X } from '@lucide/vue'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
@@ -8,6 +9,7 @@ import { useGridResize } from '@/composables/preview/useGridResize'
 import { usePreviewViewport } from '@/composables/preview/usePreviewViewport'
 import { useEditorContext } from '@/composables/useEditor'
 import { gridCells } from '../../../shared/layout'
+import PreviewDetailLayer from './PreviewDetailLayer.vue'
 
 const { zoom } = defineProps<{ zoom: number | null }>()
 const emit = defineEmits<{
@@ -82,6 +84,15 @@ const {
   resizing,
   zoom: () => zoom,
   emit,
+})
+const detailGroups = computed(() => {
+  const groups = new Map<string, DecodedTile[]>()
+  for (const tile of regionPreview.value?.detailTiles ?? []) {
+    const tiles = groups.get(tile.cellId) ?? []
+    tiles.push(tile)
+    groups.set(tile.cellId, tiles)
+  }
+  return [...groups].map(([id, tiles]) => ({ id, tiles }))
 })
 const showRendering = ref(false)
 let renderingTimer: ReturnType<typeof setTimeout> | undefined
@@ -274,21 +285,14 @@ const { dividers, dividerFeedback, hoverDivider, leaveDivider, resize }
           height: `${regionPreview.region.height * scale}px`,
         }"
       >
-      <img
-        v-for="tile in regionPreview?.detailTiles ?? []"
+      <PreviewDetailLayer
+        v-for="group in detailGroups"
         v-show="regionAllowed && !dragging"
-        :key="tile.key"
-        :src="tile.dataUrl"
-        alt=""
-        draggable="false"
-        class="pointer-events-none absolute"
-        :style="{
-          left: `${tile.x * scale}px`,
-          top: `${tile.y * scale}px`,
-          width: `${tile.width * scale}px`,
-          height: `${tile.height * scale}px`,
-        }"
-      >
+        :key="`${group.id}:${e.state.output.profile}`"
+        :tiles="group.tiles"
+        :color-space="e.state.output.profile === 'srgb' ? 'srgb' : 'display-p3'"
+        :scale="scale"
+      />
       <div
         v-if="e.state.layout === 'grid'"
         class="outer-tracks"

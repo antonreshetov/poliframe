@@ -124,12 +124,11 @@ export interface LayoutResult {
 }
 export interface PreviewResult {
   detailTiles?: (Rect & {
+    cellId: string
     key: string
     pixelWidth: number
     pixelHeight: number
     data?: Uint8Array
-    /** Renderer-owned Blob URL; never sent by the worker. */
-    dataUrl?: string
   })[]
   annotationLayers?: (Rect & { dataUrl: string, opacity?: number })[]
   gestureImagesKey?: string

@@ -309,6 +309,7 @@ export async function detailPreview(
             .toBuffer()
         })
     detailTiles.push({
+      cellId: cell.id,
       key: tileKey,
       x: cell.x + tile.left / xScale,
       y: cell.y + tile.top / yScale,

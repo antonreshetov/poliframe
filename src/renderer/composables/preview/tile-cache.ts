@@ -1,11 +1,34 @@
 import type { PreviewResult } from '../../../shared/contracts'
 
 type Tile = NonNullable<PreviewResult['detailTiles']>[number]
+export type DecodedTile = Omit<Tile, 'data'> & { bitmap: ImageBitmap }
+export type DetailPreview = Omit<PreviewResult, 'detailTiles'> & {
+  detailTiles?: DecodedTile[]
+}
 interface Entry {
-  url: string
   cost: number
-  image: HTMLImageElement
+  bitmap: ImageBitmap
   ready: boolean
+}
+
+export function tileSurface(tiles: Tile[]) {
+  const first = tiles[0]!
+  const x = Math.min(...tiles.map(tile => tile.x))
+  const y = Math.min(...tiles.map(tile => tile.y))
+  const right = Math.max(...tiles.map(tile => tile.x + tile.width))
+  const bottom = Math.max(...tiles.map(tile => tile.y + tile.height))
+  const xScale = first.pixelWidth / first.width
+  const yScale = first.pixelHeight / first.height
+  return {
+    x,
+    y,
+    width: right - x,
+    height: bottom - y,
+    xScale,
+    yScale,
+    pixelWidth: Math.max(1, Math.round((right - x) * xScale)),
+    pixelHeight: Math.max(1, Math.round((bottom - y) * yScale)),
+  }
 }
 
 /** Owns decoded tile resources, including the visible set, within one byte budget. */
@@ -13,6 +36,7 @@ export class PreviewTileCache {
   private entries = new Map<string, Entry>()
   private bytes = 0
   private queue: Promise<unknown> = Promise.resolve()
+  private generation = 0
 
   constructor(
     private readonly onEvict: (key: string) => void,
@@ -32,19 +56,20 @@ export class PreviewTileCache {
     this.onEvict(key)
     this.entries.delete(key)
     this.bytes -= entry.cost
-    entry.image.src = ''
-    URL.revokeObjectURL(entry.url)
+    entry.bitmap.close()
   }
 
   clear() {
+    this.generation++
     for (const key of this.entries.keys()) this.remove(key)
   }
 
-  load(tiles: Tile[], current: () => boolean): Promise<Tile[] | null> {
-    // Preparing/evicting a batch is synchronous. In-flight acknowledgments
-    // therefore never advertise entries a previous decode can later evict.
+  load(tiles: Tile[], current: () => boolean): Promise<DecodedTile[] | null> {
+    // Serialize batches; only fully published bitmaps are acknowledged.
+    const generation = this.generation
+    const active = () => generation === this.generation && current()
     const job = this.queue.then(() =>
-      current() ? this.prepare(tiles, current) : null,
+      active() ? this.prepare(tiles, active) : null,
     )
     this.queue = job.catch(() => {})
     return job
@@ -53,7 +78,7 @@ export class PreviewTileCache {
   private async prepare(
     tiles: Tile[],
     current: () => boolean,
-  ): Promise<Tile[] | null> {
+  ): Promise<DecodedTile[] | null> {
     const unique = new Map(tiles.map(tile => [tile.key, tile]))
     const costs = new Map<string, number>()
     for (const [key, tile] of unique) {
@@ -80,6 +105,19 @@ export class PreviewTileCache {
     ) {
       throw new Error('Preview region exceeds the memory budget')
     }
+    const surfaces = new Map<string, Tile[]>()
+    for (const tile of tiles) {
+      const group = surfaces.get(tile.cellId) ?? []
+      group.push(tile)
+      surfaces.set(tile.cellId, group)
+    }
+    const surfaceBytes = [...surfaces.values()].reduce((sum, group) => {
+      const { pixelWidth, pixelHeight } = tileSurface(group)
+      return sum + pixelWidth * pixelHeight * 4
+    }, 0)
+    // Visible canvas surfaces have a separate 16 MiB CPU + 16 MiB GPU cap.
+    if (!Number.isFinite(surfaceBytes) || surfaceBytes > 16 * 1024 * 1024)
+      throw new Error('Preview surfaces exceed the memory budget')
     const added: string[] = []
     const extra = [...costs].reduce(
       (sum, [key, cost]) => sum + (this.entries.has(key) ? 0 : cost),
@@ -102,29 +140,25 @@ export class PreviewTileCache {
       for (const [key, tile] of unique) {
         if (this.entries.has(key))
           continue
-        const image = new window.Image()
-        const url = URL.createObjectURL(
-          new Blob([new Uint8Array(tile.data!)], { type: 'image/jpeg' }),
-        )
-        const entry = { url, cost: costs.get(key)!, image, ready: false }
-        this.entries.set(key, entry)
-        this.bytes += entry.cost
-        added.push(key)
-        image.src = url
-      }
-      for (const key of added) {
         if (!current())
           return null
-        const entry = this.entries.get(key)!
-        await entry.image.decode()
-        const tile = unique.get(key)!
+        const bitmap = await createImageBitmap(
+          new Blob([new Uint8Array(tile.data!)], { type: 'image/jpeg' }),
+        )
+        if (!current()) {
+          bitmap.close()
+          return null
+        }
         if (
-          entry.image.naturalWidth
-          && (entry.image.naturalWidth !== tile.pixelWidth
-            || entry.image.naturalHeight !== tile.pixelHeight)
+          bitmap.width !== tile.pixelWidth
+          || bitmap.height !== tile.pixelHeight
         ) {
+          bitmap.close()
           throw new Error('Invalid preview tile dimensions')
         }
+        this.entries.set(key, { cost: costs.get(key)!, bitmap, ready: false })
+        this.bytes += costs.get(key)!
+        added.push(key)
       }
       if (!current())
         return null
@@ -136,7 +170,7 @@ export class PreviewTileCache {
       }
       const result = tiles.map(({ data: _data, ...tile }) => ({
         ...tile,
-        dataUrl: this.entries.get(tile.key)!.url,
+        bitmap: this.entries.get(tile.key)!.bitmap,
       }))
       added.length = 0
       return result
