@@ -51,9 +51,9 @@
   },
   "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
   "asarUnpack": [
-    "node_modules/sharp/**/*",
-    "node_modules/@img/**/*",
-    "node_modules/exiftool-vendored.*/**/*"
+    "**/node_modules/sharp/**/*",
+    "**/node_modules/@img/**/*",
+    "**/node_modules/exiftool-vendored.*/**/*"
   ],
   "extraResources": [
     {
