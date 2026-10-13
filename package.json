@@ -1,6 +1,6 @@
 {
   "name": "poliframe",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "packageManager": "pnpm@10.29.2",
   "description": "Combine photos into clean diptychs, photo strips and custom grids",
   "author": {
